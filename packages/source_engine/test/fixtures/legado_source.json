@@ -1,0 +1,10 @@
+{
+  "bookSourceUrl": "https://legado.example.com",
+  "bookSourceName": "示例书源",
+  "searchUrl": "https://legado.example.com/search?q={{key}}",
+  "ruleSearch": {
+    "bookList": "@css:div.book-item",
+    "name": "@css:h3@text",
+    "bookUrl": "@css:a.link@href"
+  }
+}

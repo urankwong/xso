@@ -1,0 +1,24 @@
+{
+  "meta": {
+    "id": "com.example.mag",
+    "name": "示例磁力站",
+    "type": "magnet",
+    "version": 1,
+    "engine": "script"
+  },
+  "search": {
+    "request": {
+      "url": "https://example.com/search?q={{keyword}}&p={{page}}",
+      "method": "GET",
+      "headers": {"Referer": "https://example.com"},
+      "charset": "utf-8"
+    },
+    "result": {
+      "container": "div.result-item",
+      "fields": {
+        "title": {"selector": "h3", "attr": "text"},
+        "url": {"selector": "a.mag-link", "attr": "href"}
+      }
+    }
+  }
+}
