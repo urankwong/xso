@@ -7,6 +7,9 @@ class SourceAssembler {
   final SourceEngine engine;
   final String repoPath;
 
+  /// 已解析的两段式源（id → Source），供详情页二次请求
+  final Map<String, Source> _ownSources = {};
+
   SourceAssembler({required this.engine, required this.repoPath});
 
   Future<List<SearchableSource>> loadEnabled() async {
@@ -19,9 +22,13 @@ class SourceAssembler {
       try {
         switch (s.format) {
           case 'own':
-            result.add(_EngineSource(engine, parseSource(raw)));
+            final parsed = parseSource(raw);
+            _ownSources[s.id] = parsed;
+            result.add(_EngineSource(engine, parsed));
           case 'legado':
-            result.add(_EngineSource(engine, LegadoAdapter().translate(raw)));
+            final translated = LegadoAdapter().translate(raw);
+            _ownSources[s.id] = translated;
+            result.add(_EngineSource(engine, translated));
           case 'musicfree':
             result.add(
                 await MusicFreeAdapter(jsRuntime: engine.jsRuntime).wrap(raw));
@@ -36,6 +43,16 @@ class SourceAssembler {
       }
     }
     return result;
+  }
+
+  /// 两段式：按仓库源 id 取已解析 Source 并请求详情页提取网盘链接
+  Future<List<SearchResult>> fetchDetail(
+      String sourceId, SearchResult item) async {
+    final source = _ownSources[sourceId];
+    if (source == null) {
+      throw Exception('两段式源未装配: $sourceId');
+    }
+    return engine.fetchDetail(source, item);
   }
 }
 

@@ -118,6 +118,80 @@ class _ResultTile extends StatelessWidget {
   final SearchResult result;
   const _ResultTile({required this.result});
 
+  void _openDetailSheet(BuildContext context) {
+    final container = ProviderScope.containerOf(context);
+    final assembler = container.read(sourceAssemblerProvider).value;
+    showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheetContext) => FutureBuilder<List<SearchResult>>(
+        future: assembler?.fetchDetail(result.sourceId, result),
+        builder: (context, snap) {
+          if (snap.connectionState != ConnectionState.done) {
+            return const SizedBox(
+                height: 120,
+                child: Center(child: CircularProgressIndicator()));
+          }
+          if (snap.hasError) {
+            return SizedBox(
+                height: 140,
+                child: Center(
+                    child: Text('详情获取失败：${snap.error}',
+                        style: TextStyle(
+                            color: Theme.of(context).colorScheme.error))));
+          }
+          final links = snap.data ?? [];
+          if (links.isEmpty) {
+            return const SizedBox(
+                height: 120, child: Center(child: Text('详情页未识别到网盘链接')));
+          }
+          return SafeArea(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: Text(result.title,
+                      style: Theme.of(context).textTheme.titleSmall),
+                ),
+                ...links.map((l) => ListTile(
+                      leading: const Icon(Icons.link),
+                      title: Text(l.url,
+                          maxLines: 1, overflow: TextOverflow.ellipsis),
+                      subtitle: l.extractCode != null
+                          ? Text('提取码: ${l.extractCode}')
+                          : null,
+                      trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+                        IconButton(
+                          icon: const Icon(Icons.copy),
+                          tooltip: '复制',
+                          onPressed: () {
+                            Clipboard.setData(ClipboardData(
+                                text: CopyLinkAction().clipboardContent(l)));
+                            Navigator.pop(sheetContext);
+                            ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(content: Text('已复制链接和提取码')));
+                          },
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.open_in_new),
+                          tooltip: '打开',
+                          onPressed: () {
+                            launchUrl(Uri.parse(l.url),
+                                mode: LaunchMode.externalApplication);
+                          },
+                        ),
+                      ]),
+                    )),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return ListTile(
@@ -127,7 +201,9 @@ class _ResultTile extends StatelessWidget {
           : (result.extra?['size'] != null && result.extra!['size']!.isNotEmpty
               ? Text(result.extra!['size']!)
               : null),
-      trailing: PopupMenuButton<String>(
+      trailing: result.needsDetail
+          ? const Icon(Icons.chevron_right)
+          : PopupMenuButton<String>(
         onSelected: (action) async {
           switch (action) {
             case 'copy':
@@ -161,6 +237,7 @@ class _ResultTile extends StatelessWidget {
           PopupMenuItem(value: 'favorite', child: Text('收藏')),
         ],
       ),
+      onTap: result.needsDetail ? () => _openDetailSheet(context) : null,
     );
   }
 }
