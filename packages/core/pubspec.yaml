@@ -1,0 +1,7 @@
+name: core
+description: 聚合搜索核心模型与调度（纯 Dart）
+version: 0.1.0
+environment:
+  sdk: ^3.5.0
+dev_dependencies:
+  test: ^1.25.0

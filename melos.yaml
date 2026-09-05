@@ -1,0 +1,12 @@
+name: search_aggregator
+packages:
+  - app
+  - packages/**
+command:
+  bootstrap:
+    runPubGetInParallel: true
+scripts:
+  test:
+    exec: dart test
+    packageFilters:
+      dirExists: test
