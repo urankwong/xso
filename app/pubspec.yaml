@@ -31,3 +31,10 @@ flutter:
   uses-material-design: true
   assets:
     - assets/sources/
+
+# sqlite3 构建钩子默认从 GitHub 下载预编译库，国内不可达，
+# 改走 ghfast.top 代理（本地构建配置，不影响运行时）。
+hooks:
+  user_defines:
+    sqlite3:
+      url_pattern: "https://ghfast.top/https://github.com/simolus3/sqlite3.dart/releases/download/$RELEASE_TAG/$FILENAME"
