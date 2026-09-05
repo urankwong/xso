@@ -3,17 +3,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../providers/data_providers.dart';
 import '../providers/search_providers.dart';
 
-class HistoryPage extends ConsumerStatefulWidget {
+class HistoryPage extends ConsumerWidget {
   const HistoryPage({super.key});
-  @override
-  ConsumerState<HistoryPage> createState() => _HistoryPageState();
-}
-
-class _HistoryPageState extends ConsumerState<HistoryPage> {
-  Future<void> _reload() async => setState(() {});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final db = ref.watch(appDbProvider);
     return Scaffold(
       appBar: AppBar(
@@ -21,14 +15,11 @@ class _HistoryPageState extends ConsumerState<HistoryPage> {
         actions: [
           IconButton(
               icon: const Icon(Icons.delete_sweep),
-              onPressed: () async {
-                await db.historyDao.clear();
-                await _reload();
-              }),
+              onPressed: () => db.historyDao.clear()),
         ],
       ),
-      body: FutureBuilder(
-        future: db.historyDao.all(),
+      body: StreamBuilder(
+        stream: db.historyDao.watchAll(),
         builder: (context, snapshot) {
           final items = snapshot.data ?? [];
           if (items.isEmpty) {
@@ -43,9 +34,7 @@ class _HistoryPageState extends ConsumerState<HistoryPage> {
                         await ref
                             .read(searchSessionProvider.notifier)
                             .search(h.keyword);
-                        if (mounted) {
-                          // 回到搜索页查看结果
-                          DefaultTabController.maybeOf(context);
+                        if (context.mounted) {
                           Navigator.popUntil(context, (r) => r.isFirst);
                         }
                       },

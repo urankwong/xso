@@ -25,6 +25,9 @@ class SearchSessionNotifier extends StateNotifier<SearchSession?> {
     final session = SearchSession(keyword);
     state = session;
 
+    // 记录搜索历史（重复关键词自动置顶）
+    ref.read(appDbProvider).historyDao.record(keyword);
+
     final sources = await ref.read(searchableSourcesProvider.future);
     final orchestrator = ref.read(orchestratorProvider);
 

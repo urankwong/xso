@@ -5,7 +5,8 @@ import 'package:source_engine/source_engine.dart';
 /// 内置源包：随 App 出厂的示例/站点源，一键导入到源仓库。
 class BuiltinSources {
   static const _manifest = [
-    'assets/sources/magnet_example.json',
+    'assets/sources/knaben_magnet.json',
+    'assets/sources/tpb_magnet.json',
     'assets/sources/pan_cms_example.json',
     'assets/sources/magnet_json_example.json',
   ];

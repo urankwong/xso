@@ -98,6 +98,20 @@ void main() {
     expect(results[0].title, 'JS结果');
   });
 
+  test('无 url 的行（如表头）被过滤', () async {
+    const html = '<table id="s"><tr><th>标题</th></tr>'
+        '<tr><td><a href="magnet:?xt=1">A</a></td></tr></table>';
+    responses['https://x.com/s?q=k&p=1'] = html;
+    final source = testSource(
+      '"search":{"request":{"url":"https://x.com/s?q={{keyword}}&p={{page}}"},'
+      '"result":{"container":"#s tr","fields":{'
+      '"title":{"selector":"a"},"url":{"selector":"a","attr":"href"}}}}',
+    );
+    final results = await buildEngine().search(source, SearchQuery(keyword: 'k'));
+    expect(results, hasLength(1));
+    expect(results[0].title, 'A');
+  });
+
   test('网络异常抛 SourceExecutionException，含源 id', () async {
     final source = testSource(
       '"search":{"request":{"url":"https://x.com/s?q={{keyword}}&p={{page}}"},'

@@ -51,8 +51,11 @@ class SourceEngine {
         charset: rule.request.charset,
       ).timeout(searchTimeout);
       final rows = await _parseRows(source, body);
+      // 表头/占位行等没有 url 的条目直接丢弃（url 是结果的最低要求）
+      final usable =
+          rows.where((row) => (row['url'] ?? '').isNotEmpty).toList();
       final twoPhase = source.detail != null;
-      return rows
+      return usable
           .map((row) => _toResult(source, row, needsDetail: twoPhase))
           .toList();
     } on SourceExecutionException {

@@ -22,6 +22,11 @@ class FavoriteDao extends DatabaseAccessor<AppDb> with _$FavoriteDaoMixin {
       (select(db.favorites)..orderBy([(f) => OrderingTerm.desc(f.createdAt)]))
           .get();
 
+  /// 流式版本：数据变化自动推送
+  Stream<List<Favorite>> watchAll() =>
+      (select(db.favorites)..orderBy([(f) => OrderingTerm.desc(f.createdAt)]))
+          .watch();
+
   Future<List<Favorite>> byType(SourceType type) =>
       (select(db.favorites)..where((f) => f.type.equals(type.name))).get();
 

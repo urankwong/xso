@@ -24,5 +24,10 @@ class HistoryDao extends DatabaseAccessor<AppDb> with _$HistoryDaoMixin {
       (select(db.histories)..orderBy([(h) => OrderingTerm.desc(h.searchedAt)]))
           .get();
 
+  /// 流式版本：数据变化自动推送
+  Stream<List<History>> watchAll() =>
+      (select(db.histories)..orderBy([(h) => OrderingTerm.desc(h.searchedAt)]))
+          .watch();
+
   Future<void> clear() => delete(db.histories).go();
 }
