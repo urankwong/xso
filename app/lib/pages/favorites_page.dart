@@ -51,46 +51,93 @@ class FavoritesPage extends ConsumerWidget {
         builder: (context, snapshot) {
           final items = snapshot.data ?? [];
           if (items.isEmpty) {
-            return const Center(child: Text('暂无收藏（搜索结果菜单里可收藏）'));
+            return Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.star_border, size: 60,
+                      color: Theme.of(context).colorScheme.outline),
+                  const SizedBox(height: 12),
+                  const Text('暂无收藏'),
+                  const SizedBox(height: 6),
+                  Text('搜索结果的菜单里可以收藏',
+                      style: TextStyle(
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                          fontSize: 12)),
+                ],
+              ),
+            );
           }
-          return ListView(
-            children: items
-                .map((f) => ListTile(
-                      title: Text(f.title,
-                          style: f.isDead
-                              ? const TextStyle(
-                                  color: Colors.red,
-                                  decoration: TextDecoration.lineThrough)
-                              : null),
-                      subtitle: Text(f.url,
-                          maxLines: 1, overflow: TextOverflow.ellipsis),
-                      trailing: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          if (f.extractCode != null) Text('码: ${f.extractCode}'),
-                          IconButton(
-                            icon: const Icon(Icons.delete_outline),
-                            onPressed: () => db.favoriteDao.remove(f.id),
-                          ),
-                        ],
+          return ListView.builder(
+            padding: const EdgeInsets.only(bottom: 8),
+            itemCount: items.length,
+            itemBuilder: (context, i) {
+              final f = items[i];
+              return Card(
+                clipBehavior: Clip.antiAlias,
+                child: ListTile(
+                  leading: CircleAvatar(
+                    radius: 17,
+                    backgroundColor: f.isDead
+                        ? Theme.of(context).colorScheme.errorContainer
+                        : Theme.of(context)
+                            .colorScheme
+                            .primary
+                            .withValues(alpha: 0.12),
+                    child: Icon(
+                      Icons.cloud_outlined,
+                      size: 18,
+                      color: f.isDead
+                          ? Theme.of(context).colorScheme.error
+                          : Theme.of(context).colorScheme.primary,
+                    ),
+                  ),
+                  title: Text(f.title,
+                      maxLines: 1, overflow: TextOverflow.ellipsis,
+                      style: f.isDead
+                          ? const TextStyle(
+                              color: Colors.red,
+                              decoration: TextDecoration.lineThrough)
+                          : null),
+                  subtitle: Text(
+                    f.extractCode != null
+                        ? '提取码 ${f.extractCode} · ${f.url}'
+                        : f.url,
+                    maxLines: 1, overflow: TextOverflow.ellipsis,
+                  ),
+                  trailing: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      IconButton(
+                        icon: const Icon(Icons.copy, size: 20),
+                        tooltip: '复制',
+                        onPressed: () async {
+                          await Clipboard.setData(ClipboardData(
+                              text:
+                                  '${f.url} 提取码: ${f.extractCode ?? ''}'));
+                          if (context.mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(content: Text('已复制')));
+                          }
+                        },
                       ),
-                      onTap: () async {
-                        final uri = Uri.parse(f.url);
-                        if (await canLaunchUrl(uri)) {
-                          await launchUrl(uri,
-                              mode: LaunchMode.externalApplication);
-                        }
-                      },
-                      onLongPress: () async {
-                        await Clipboard.setData(ClipboardData(
-                            text: '${f.url} 提取码: ${f.extractCode ?? ''}'));
-                        if (context.mounted) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(content: Text('已复制')));
-                        }
-                      },
-                    ))
-                .toList(),
+                      IconButton(
+                        icon: const Icon(Icons.delete_outline, size: 20),
+                        tooltip: '删除',
+                        onPressed: () => db.favoriteDao.remove(f.id),
+                      ),
+                    ],
+                  ),
+                  onTap: () async {
+                    final uri = Uri.parse(f.url);
+                    if (await canLaunchUrl(uri)) {
+                      await launchUrl(uri,
+                          mode: LaunchMode.externalApplication);
+                    }
+                  },
+                ),
+              );
+            },
           );
         },
       ),

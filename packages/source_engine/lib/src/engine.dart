@@ -87,6 +87,7 @@ class SourceEngine {
                 title: item.title,
                 url: l.url,
                 extractCode: l.extractCode,
+                extra: {'provider': l.provider.name},
               ))
           .toList();
     } catch (e) {

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../main.dart' show homeTabIndexProvider;
 import '../providers/player_providers.dart';
 import 'search_page.dart';
 import 'source_manage_page.dart';
@@ -7,14 +8,13 @@ import 'favorites_page.dart';
 import 'history_page.dart';
 import 'settings_page.dart';
 
-class HomeShell extends StatefulWidget {
+class HomeShell extends ConsumerStatefulWidget {
   const HomeShell({super.key});
   @override
-  State<HomeShell> createState() => _HomeShellState();
+  ConsumerState<HomeShell> createState() => _HomeShellState();
 }
 
-class _HomeShellState extends State<HomeShell> {
-  int _index = 0;
+class _HomeShellState extends ConsumerState<HomeShell> {
   final _pages = const [
     SearchPage(),
     SourceManagePage(),
@@ -25,15 +25,17 @@ class _HomeShellState extends State<HomeShell> {
 
   @override
   Widget build(BuildContext context) {
+    final index = ref.watch(homeTabIndexProvider);
     return Scaffold(
-      body: IndexedStack(index: _index, children: _pages),
+      body: IndexedStack(index: index, children: _pages),
       bottomNavigationBar: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
           const _MiniPlayerBar(),
           NavigationBar(
-            selectedIndex: _index,
-            onDestinationSelected: (i) => setState(() => _index = i),
+            selectedIndex: index,
+            onDestinationSelected: (i) =>
+                ref.read(homeTabIndexProvider.notifier).state = i,
             destinations: const [
               NavigationDestination(icon: Icon(Icons.search), label: '搜索'),
               NavigationDestination(icon: Icon(Icons.extension), label: '源'),
@@ -72,6 +74,12 @@ class _MiniPlayerBar extends ConsumerWidget {
                 top: BorderSide(color: Theme.of(context).dividerColor)),
           ),
           child: Column(mainAxisSize: MainAxisSize.min, children: [
+            if (st.duration != null && st.duration!.inMilliseconds > 0)
+              LinearProgressIndicator(
+                value: (st.position.inMilliseconds / st.duration!.inMilliseconds)
+                    .clamp(0.0, 1.0),
+                minHeight: 2,
+              ),
             if (st.error != null)
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 12),

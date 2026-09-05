@@ -14,6 +14,12 @@ class BuiltinSources {
     'assets/sources/magnet_json_example.json',
   ];
 
+  /// JS 源文件名 → 展示名
+  static const _jsPrettyNames = {
+    'musicfree_itunes.js': 'iTunes 音乐（MusicFree 插件）',
+    'lx_itunes.js': 'iTunes 音乐（洛雪源）',
+  };
+
   /// 读取全部内置源原文
   static Future<List<String>> loadAll() async {
     return [for (final p in _manifest) await rootBundle.loadString(p)];
@@ -27,18 +33,25 @@ class BuiltinSources {
       try {
         final raw = await rootBundle.loadString(path);
         final format = detectSourceFormat(raw);
-        final String id;
+        String id;
+        String name;
         switch (format) {
           case SourceFormat.own:
-            id = parseSource(raw).meta.id;
+            final meta = parseSource(raw).meta;
+            id = meta.id;
+            name = meta.name;
           case SourceFormat.legado:
-            id = LegadoAdapter().translate(raw).meta.id;
+            final meta = LegadoAdapter().translate(raw).meta;
+            id = meta.id;
+            name = meta.name;
           case SourceFormat.musicfree || SourceFormat.lx:
             // JS 源脚本没有稳定 id 字段，按文件名生成
-            id = 'builtin.${path.split('/').last.replaceAll('.', '_')}';
+            final base = path.split('/').last;
+            id = 'builtin.${base.replaceAll('.', '_')}';
+            name = _jsPrettyNames[base] ?? base;
         }
         if (existing.any((e) => e.id == id)) continue;
-        await repo.save(id, format: format.name, raw: raw);
+        await repo.save(id, format: format.name, raw: raw, name: name);
         imported++;
       } catch (_) {
         // 单个内置源损坏不影响其余导入
