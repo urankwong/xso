@@ -5,6 +5,7 @@ import 'package:core/core.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../providers/search_providers.dart';
 import '../providers/data_providers.dart';
+import '../providers/player_providers.dart';
 
 class SearchPage extends ConsumerStatefulWidget {
   const SearchPage({super.key});
@@ -192,6 +193,21 @@ class _ResultTile extends StatelessWidget {
     );
   }
 
+  bool get _isPlayable =>
+      result.type == SourceType.music &&
+      result.url.startsWith('http') &&
+      !result.needsDetail;
+
+  void _play(BuildContext context) {
+    final container = ProviderScope.containerOf(context);
+    final player = container.read(playerProvider);
+    player.play(
+      url: result.url,
+      title: result.title,
+      artist: result.extra?['artist'],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return ListTile(
@@ -206,6 +222,8 @@ class _ResultTile extends StatelessWidget {
           : PopupMenuButton<String>(
         onSelected: (action) async {
           switch (action) {
+            case 'play':
+              _play(context);
             case 'copy':
               await Clipboard.setData(
                   ClipboardData(text: CopyLinkAction().clipboardContent(result)));
@@ -231,13 +249,17 @@ class _ResultTile extends StatelessWidget {
               }
           }
         },
-        itemBuilder: (_) => const [
-          PopupMenuItem(value: 'copy', child: Text('复制链接')),
-          PopupMenuItem(value: 'open', child: Text('打开')),
-          PopupMenuItem(value: 'favorite', child: Text('收藏')),
+        itemBuilder: (_) => [
+          if (_isPlayable)
+            const PopupMenuItem(value: 'play', child: Text('播放')),
+          const PopupMenuItem(value: 'copy', child: Text('复制链接')),
+          const PopupMenuItem(value: 'open', child: Text('打开')),
+          const PopupMenuItem(value: 'favorite', child: Text('收藏')),
         ],
       ),
-      onTap: result.needsDetail ? () => _openDetailSheet(context) : null,
+      onTap: result.needsDetail
+          ? () => _openDetailSheet(context)
+          : (_isPlayable ? () => _play(context) : null),
     );
   }
 }
