@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:data/data.dart';
 import 'package:source_engine/source_engine.dart';
 import '../providers/engine_providers.dart';
+import '../providers/builtin_sources.dart';
 import 'source_debug_page.dart';
 
 /// 导入状态反馈 SnackBar 的辅助扩展
@@ -24,7 +25,27 @@ class _SourceManagePageState extends ConsumerState<SourceManagePage> {
   @override
   void initState() {
     super.initState();
-    _reload();
+    _init();
+  }
+
+  Future<void> _init() async {
+    // 首次启动自动导入内置源（已导入的跳过）
+    final path = await ref.read(sourceRepositoryPathProvider.future);
+    final repo = SourceRepository(path);
+    if ((await repo.list()).isEmpty) {
+      final n = await BuiltinSources.importAll(repo);
+      if (mounted && n > 0) {
+        context.tip('已导入 $n 个内置源，可直接搜索');
+      }
+    }
+    await _reload();
+  }
+
+  Future<void> _importBuiltin() async {
+    final path = await ref.read(sourceRepositoryPathProvider.future);
+    final n = await BuiltinSources.importAll(SourceRepository(path));
+    await _reload();
+    if (mounted) context.tip(n > 0 ? '已导入 $n 个内置源' : '内置源均已存在');
   }
 
   Future<void> _reload() async {
@@ -66,14 +87,23 @@ class _SourceManagePageState extends ConsumerState<SourceManagePage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('源管理')),
+      appBar: AppBar(
+        title: const Text('源管理'),
+        actions: [
+          TextButton.icon(
+            onPressed: _importBuiltin,
+            icon: const Icon(Icons.inventory_2, size: 18),
+            label: const Text('导入内置源'),
+          ),
+        ],
+      ),
       floatingActionButton: FloatingActionButton.extended(
         onPressed: _importFromClipboard,
         icon: const Icon(Icons.content_paste),
         label: const Text('剪贴板导入'),
       ),
       body: _sources.isEmpty
-          ? const Center(child: Text('还没有源，点击右下角从剪贴板导入'))
+          ? const Center(child: Text('还没有源：点右上角导入内置源，或用剪贴板导入'))
           : ListView(
               children: _sources
                   .map((s) => ListTile(
