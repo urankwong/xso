@@ -83,8 +83,9 @@ class SourceEngine {
     try {
       final detail = source.detail!;
       final detailUrl = item.url; // 列表 fields.url 即 detailUrl
-      final url = renderUrlTemplate(detail.request.url, detailUrl: detailUrl);
-      final body = await fetcher(url).timeout(searchTimeout);
+      final url = _resolveDetailUrl(detail.request.url, detailUrl);
+      final body =
+          await fetcher(url, headers: _headersOf(source)).timeout(searchTimeout);
 
       // 正文选择器切出正文文本
       final contentText = extractHtmlText(body, detail.content);
@@ -168,18 +169,39 @@ class SourceEngine {
         .toList();
   }
 
+  /// 解析详情页地址。
+  ///
+  /// 搜索结果的 url 现在已**绝对化**（见 `_toResult`），而不少源的 detail
+  /// 模板是 `https://站点{{detailUrl}}` 这种"给相对路径加前缀"的写法 ——
+  /// 直接渲染会拼出 `https://站点https://站点/xxx`。
+  /// 因此当明细地址已经是绝对 URL、且模板正好是「http 前缀 + 占位符」时，
+  /// 直接采用明细地址（模板带额外后缀/参数的情况仍走渲染，避免丢参）。
+  String _resolveDetailUrl(String tpl, String detailUrl) {
+    if (detailUrl.startsWith('http') &&
+        RegExp(r'^https?://[^{]*\{\{detailUrl\}\}$').hasMatch(tpl)) {
+      return detailUrl;
+    }
+    return renderUrlTemplate(tpl, detailUrl: detailUrl);
+  }
+
   SearchResult _toResult(Source source, Map<String, String?> row,
       {required bool needsDetail}) {
     final extra = Map<String, String?>.from(row)
       ..remove('title')
       ..remove('url')
       ..remove('code');
+    // 链接必须绝对化：Legado 源的 bookUrl 规则普遍是相对路径
+    // （如 `a@href` → `/novel/44162`）。原样透传会让后续所有环节失败——
+    // 详情页/阅读器请求 `/novel/44162` 直接 DioException（无 host），
+    // 收藏里存的也是打不开的相对地址。
+    final rawUrl = row['url'] ?? '';
+    final absUrl = _abs(rawUrl, _baseOf(source)) ?? rawUrl;
     return SearchResult(
       sourceId: source.meta.id,
       sourceName: source.meta.name,
       type: source.meta.type,
       title: row['title'] ?? '(无标题)',
-      url: row['url'] ?? '',
+      url: absUrl,
       extractCode: row['code'],
       extra: extra.map((k, v) => MapEntry(k, v ?? '')),
       needsDetail: needsDetail,
@@ -208,7 +230,10 @@ class SourceEngine {
     if (u == null) return null;
     final s = u.trim();
     if (s.isEmpty) return null;
-    if (s.startsWith('http')) return s;
+    // 已自带协议的一律原样返回：http/https，以及 magnet: / ed2k: / thunder: 等。
+    // 只判 `startsWith('http')` 会把 `magnet:?xt=1` 拼成
+    // `https://站点/magnet:?xt=1`，磁力/电驴链接直接报废。
+    if (RegExp(r'^[a-zA-Z][a-zA-Z0-9+.\-]*:').hasMatch(s)) return s;
     if (s.startsWith('//')) return 'https:$s';
     if (base.isEmpty) return s;
     final b = base.replaceAll(RegExp(r'/+$'), '');

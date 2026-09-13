@@ -177,6 +177,13 @@ class LegadoAdapter {
     return ContentRule(content: content, nextUrl: _optField(c['nextUrl']));
   }
 
+  /// Legado 里的**属性名简写**：当 bookList/目录容器已经定位到目标元素时，
+  /// 字段规则常直接写属性名（`text` / `href` / `html` …），语义是
+  /// "取当前元素的该属性"，而**不是** CSS 选择器。
+  /// 若照 CSS 解析会被当成 HTML 标签名去查询，永远取不到值
+  /// （实测黄金屋的 chapterName=`text`、chapterUrl=`href` 全部落空，
+  /// 导致目录为空、详情页没有「开始阅读」入口）。
+  ///
   /// 把可选规则字段转成 FieldRule；含 JS 规则时返回 null（见 _buildBookMeta 说明）。
   FieldRule? _optField(dynamic raw) {
     if (raw is! String) return null;
@@ -184,6 +191,10 @@ class LegadoAdapter {
     if (s.isEmpty) return null;
     if (_extractJs(s) != null) return null;
     if (s.contains('&&') || s.contains('{{js')) return null;
+    // 属性名简写 → 作用于元素自身（空选择器由解释器按"当前元素"处理）
+    if (_knownAttrs.contains(s)) {
+      return FieldRule(selector: '', attr: s);
+    }
     return _buildFieldRule(s);
   }
 
@@ -677,6 +688,26 @@ class LegadoAdapter {
   /// 这类选择器中间/内部的 @ 当成属性分隔符而截断（实测快眼看书被切成 `//div[`）。
   static final _tailAttr = RegExp(r'@([A-Za-z][\w:-]*)$');
 
+  /// 明确的属性名集合。
+  ///
+  /// 不在此列、但形如标签名的 `@xxx`（如 `@a`/`@li`）是 legado 的
+  /// "取子元素"写法，不是取属性 —— 两者混淆会让 `#chapterList@a`
+  /// 变成查一个名为 a 的属性，永远取不到值。
+  /// 同时也用于识别"属性名简写"（规则直接写 `text`/`href`）。
+  static const _knownAttrs = {
+    'text',
+    'href',
+    'html',
+    'src',
+    'title',
+    'alt',
+    'content',
+    'value',
+  };
+
+  static bool _isKnownAttr(String a) =>
+      _knownAttrs.contains(a) || a.startsWith('data-');
+
   /// 解析 Legado 规则为本引擎 CSS 选择器。
   /// 支持 "@css:sel" / "sel"（默认 JSoup 语法子集）。
   String _parseSelector(String rule) {
@@ -687,7 +718,19 @@ class LegadoAdapter {
       s = s.substring(6);
     }
     final m = _tailAttr.firstMatch(s);
-    if (m != null) s = s.substring(0, m.start);
+    if (m != null) {
+      final attr = m.group(1)!;
+      s = s.substring(0, m.start);
+      // `@a`/`@li` 这类是 legado 的"取子元素"写法（等价于后代选择器），
+      // 只有 `@text`/`@href` 等才是取属性。混为一谈会让
+      // `#chapterList@a` 变成查一个名为 a 的属性 → 永远取不到（目录为空）。
+      if (!_isKnownAttr(attr) && RegExp(r'^[a-z][a-z0-9]*$').hasMatch(attr)) {
+        s = '$s $attr';
+      }
+    }
+    // legado 的索引写法 `.-1`（取最后一个）不是合法 CSS：去掉索引本身，
+    // 按普通选择器处理，总比整条规则抛异常、解析出 0 条要好。
+    s = s.replaceAll(RegExp(r'\.-\d+'), '');
     s = s.trim();
     // Legado 用 JSoup 风格的 `class.box`（等价于 CSS 的 `.box`），
     // 直接传给 querySelectorAll 是非法选择器。
@@ -797,6 +840,8 @@ class LegadoAdapter {
     final m = _tailAttr.firstMatch(rule.trim());
     final a = m?.group(1);
     if (a == null || a == 'text') return 'text';
+    // 非属性名的标记（如 `@a` 表示取子元素）按"取文本"处理
+    if (!_isKnownAttr(a)) return 'text';
     return a;
   }
 }
