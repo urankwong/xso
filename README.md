@@ -1,8 +1,16 @@
 # 汇搜 · xso
 
+中文 · [English](#english)
+
 一个跨来源的**聚合搜索 App**：音乐 / 书籍 / 磁力 / 网盘多品类统一搜索、播放、下载与收藏。App 本体遵循「空壳原则」，不绑定任何特定站点——通过**导入源规则**扩展能力，并**原生兼容 [Legado 简单书源](https://github.com/gedoor/legado)、[洛雪音乐助手 (lx-music) 音源](https://github.com/lyswhut/lx-music-mobile)、[MusicFree 插件](https://github.com/maotoumao/MusicFree)** 三种主流第三方源格式。
 
 技术栈：Flutter + Riverpod + QuickJS（在 Dart 侧沙箱内运行源脚本的 JS 钩子）。
+
+## English
+
+**xso (汇搜)** is a Flutter-based **aggregator search app** for music, novels, torrents and cloud-drive links — unified search, playback, download and favorites. It follows an *empty-shell* principle: it binds to no specific site and is fully source-driven, natively compatible with **[Legado](https://github.com/gedoor/legado) book sources**, **[lx-music](https://github.com/lyswhut/lx-music-desktop) sources** and **[MusicFree](https://github.com/maotoumao/MusicFree) plugins** — bring your own sources.
+
+Built with Flutter + Riverpod + QuickJS (source JS hooks run in a Dart-side sandbox). See the sections below for supported source formats, features and build steps.
 
 ## 源格式兼容
 
