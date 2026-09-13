@@ -39,18 +39,30 @@ class SourceEngine {
   Future<List<SearchResult>> search(Source source, SearchQuery query) async {
     try {
       final rule = source.search!;
-      final url = renderUrlTemplate(
-        rule.request.url,
-        keyword: query.keyword,
-        page: query.page,
-      );
+      // buildRequest 钩子优先：Legado 的 @js:/<js> searchUrl 必须真跑 JS
+      // 才能算出地址，静态模板渲染不了。
+      String url;
+      final buildHook = source.hooks?.buildRequest;
+      if (buildHook != null && buildHook.isNotEmpty) {
+        url = await _runBuildRequestHook(
+          buildHook,
+          keyword: query.keyword,
+          page: query.page,
+        );
+      } else {
+        url = renderUrlTemplate(
+          rule.request.url,
+          keyword: query.keyword,
+          page: query.page,
+        );
+      }
       final body = await fetcher(
         url,
         method: rule.request.method,
         headers: rule.request.headers,
         charset: rule.request.charset,
       ).timeout(searchTimeout);
-      final rows = await _parseRows(source, body);
+      final rows = await _parseRows(source, body, query);
       // 表头/占位行等没有 url 的条目直接丢弃（url 是结果的最低要求）
       final usable =
           rows.where((row) => (row['url'] ?? '').isNotEmpty).toList();
@@ -97,16 +109,18 @@ class SourceEngine {
 
   /// 规则解释：parse 钩子兜底 / jsonPath / container+fields
   Future<List<Map<String, String?>>> _parseRows(
-      Source source, String body) async {
+      Source source, String body, SearchQuery query) async {
     final result = source.search!.result;
     // 1) parse 钩子兜底优先级最高（作者显式声明用 JS）
     final parseHook = source.hooks?.parse;
     if (parseHook != null && parseHook.isNotEmpty) {
-      return _runParseHook(parseHook, body);
+      return _runParseHook(parseHook, body,
+          keyword: query.keyword, page: query.page);
     }
-    // 2) JSON API
+    // 2) JSON API（fields 的 selector 在 JSON 模式下表示字段路径）
     if (result?.jsonPath != null) {
-      return interpretJson(body, jsonPath: result!.jsonPath!);
+      return interpretJson(body,
+          jsonPath: result!.jsonPath!, fields: result.fields);
     }
     // 3) HTML 规则
     if (result?.container != null) {
@@ -116,9 +130,37 @@ class SourceEngine {
     throw SourceExecutionException(source.meta.id, '源缺少可用的结果解析规则');
   }
 
+  /// buildRequest 钩子：JS 返回搜索地址。
+  /// Legado 约定返回值可为 "url" 或 "url,{options}"，此处只取 URL 部分。
+  Future<String> _runBuildRequestHook(
+    String hook, {
+    required String keyword,
+    required int page,
+  }) async {
+    final script =
+        '(function(keyword, page){ $hook })(${jsonEncode(keyword)}, $page)';
+    final raw = await jsRuntime.evaluate(script, timeout: hookTimeout);
+    return _stripLegadoOptions(raw.trim());
+  }
+
+  /// 去掉 Legado "url,JSON选项" 里的选项部分，只留地址
+  String _stripLegadoOptions(String raw) {
+    final i = raw.indexOf(',');
+    if (i > 0 && raw.substring(i + 1).trimLeft().startsWith('{')) {
+      return raw.substring(0, i).trim();
+    }
+    return raw;
+  }
+
   Future<List<Map<String, String?>>> _runParseHook(
-      String hook, String body) async {
-    final script = '(function(body){ $hook })(${jsonEncode(body)})';
+    String hook,
+    String body, {
+    String keyword = '',
+    int page = 1,
+  }) async {
+    // keyword/page 一并注入：Legado 的解析规则常引用 key/page
+    final script =
+        '(function(body, keyword, page){ $hook })(${jsonEncode(body)}, ${jsonEncode(keyword)}, $page)';
     final raw = await jsRuntime.evaluate(script, timeout: hookTimeout);
     return (jsonDecode(raw) as List)
         .map((e) =>
@@ -143,4 +185,166 @@ class SourceEngine {
       needsDetail: needsDetail,
     );
   }
+
+  // ── 在线阅读链路：详情 → 目录 → 正文 ────────────────────────────────
+
+  /// 书源统一请求头（Legado 的 header 被翻译存到 search.request.headers）
+  Map<String, String> _headersOf(Source s) =>
+      s.search?.request.headers ?? const {};
+
+  /// 站点根地址：把相对链接补成绝对地址时用
+  String _baseOf(Source s) {
+    final id = s.meta.id;
+    if (id.startsWith('legado://')) return id.substring('legado://'.length);
+    final u = s.search?.request.url ?? '';
+    final i = u.indexOf('://');
+    if (i < 0) return '';
+    final rest = u.substring(i + 3);
+    final slash = rest.indexOf('/');
+    return slash < 0 ? u : '${u.substring(0, i + 3)}${rest.substring(0, slash)}';
+  }
+
+  String? _abs(String? u, String base) {
+    if (u == null) return null;
+    final s = u.trim();
+    if (s.isEmpty) return null;
+    if (s.startsWith('http')) return s;
+    if (s.startsWith('//')) return 'https:$s';
+    if (base.isEmpty) return s;
+    final b = base.replaceAll(RegExp(r'/+$'), '');
+    return s.startsWith('/') ? '$b$s' : '$b/$s';
+  }
+
+  Future<String> _get(String url, Source s) =>
+      fetcher(url, headers: _headersOf(s)).timeout(searchTimeout);
+
+  /// 书籍详情元信息（封面/简介/分类/最新章节）。
+  /// 源未声明 bookMeta 时返回空对象（不报错，详情页只展示标题与操作）。
+  Future<BookInfo> fetchBookInfo(Source source, String bookUrl) async {
+    final rule = source.bookMeta;
+    if (rule == null) return const BookInfo();
+    try {
+      final body = await _get(bookUrl, source);
+      final base = _baseOf(source);
+      String? f(FieldRule? r) => r == null ? null : extractField(body, r);
+      return BookInfo(
+        cover: _abs(f(rule.cover), base),
+        intro: f(rule.intro),
+        kind: f(rule.kind),
+        lastChapter: f(rule.lastChapter),
+        wordCount: f(rule.wordCount),
+      );
+    } on SourceExecutionException {
+      rethrow;
+    } catch (e) {
+      throw SourceExecutionException(source.meta.id, e.toString());
+    }
+  }
+
+  /// 目录。Legado 的目录多数就在详情页（bookUrl 指向的那个页面）里，
+  /// 少数站点用独立的目录页 —— 后者由源把 ruleToc 的链接写在详情页里，
+  /// 当前实现先覆盖"同页"这一主流情况。
+  Future<List<Chapter>> fetchChapters(Source source, String bookUrl) async {
+    final rule = source.toc;
+    if (rule == null) return const [];
+    try {
+      final body = await _get(bookUrl, source);
+      final base = _baseOf(source);
+      final items = selectAll(body, rule.list);
+      final out = <Chapter>[];
+      for (final it in items) {
+        final t = extractFieldIn(it, rule.name);
+        final u = extractFieldIn(it, rule.url);
+        if (t == null || u == null) continue;
+        out.add(Chapter(title: t, url: _abs(u, base) ?? u));
+      }
+      return out;
+    } on SourceExecutionException {
+      rethrow;
+    } catch (e) {
+      throw SourceExecutionException(source.meta.id, e.toString());
+    }
+  }
+
+  /// 正文。带 nextUrl 的站点会串起分页（最多 10 页，防死循环）。
+  Future<String> fetchContent(Source source, String chapterUrl) async {
+    final rule = source.content;
+    if (rule == null) return '';
+    try {
+      final buf = StringBuffer();
+      var url = chapterUrl;
+      for (var page = 0; page < 10 && url.isNotEmpty; page++) {
+        final body = await _get(url, source);
+        final raw = extractField(body, rule.content) ?? '';
+        buf.write(stripTags(raw));
+        final nextRule = rule.nextUrl;
+        if (nextRule == null) break;
+        final n = _abs(extractField(body, nextRule), _baseOf(source));
+        if (n == null || n == url) break;
+        url = n;
+      }
+      return buf.toString().trim();
+    } on SourceExecutionException {
+      rethrow;
+    } catch (e) {
+      throw SourceExecutionException(source.meta.id, e.toString());
+    }
+  }
+}
+
+/// 书籍详情元信息（字段皆可空：不同站点能提供的信息差异很大）
+class BookInfo {
+  final String? cover;
+  final String? intro;
+  final String? kind;
+  final String? lastChapter;
+  final String? wordCount;
+  const BookInfo({
+    this.cover,
+    this.intro,
+    this.kind,
+    this.lastChapter,
+    this.wordCount,
+  });
+
+  bool get isEmpty =>
+      cover == null &&
+      intro == null &&
+      kind == null &&
+      lastChapter == null &&
+      wordCount == null;
+}
+
+/// 目录条目
+class Chapter {
+  final String title;
+  final String url;
+  const Chapter({required this.title, required this.url});
+}
+
+/// 去掉正文里的 HTML 标签，转成可阅读的纯文本。
+/// 换行标签先转 \n 再整体剥标签，避免段落全糊成一行。
+String stripTags(String html) {
+  var s = html
+      .replaceAll(RegExp(r'<br\s*/?>', caseSensitive: false), '\n')
+      .replaceAll(RegExp(r'</p\s*>', caseSensitive: false), '\n')
+      .replaceAll(RegExp(r'</div\s*>', caseSensitive: false), '\n')
+      .replaceAll(RegExp(r'<script[\s\S]*?</script>', caseSensitive: false), '')
+      .replaceAll(RegExp(r'<style[\s\S]*?</style>', caseSensitive: false), '')
+      .replaceAll(RegExp(r'<[^>]+>'), '');
+  const entities = {
+    '&nbsp;': ' ',
+    '&amp;': '&',
+    '&lt;': '<',
+    '&gt;': '>',
+    '&quot;': '"',
+    '&#39;': "'",
+    '&ldquo;': '“',
+    '&rdquo;': '”',
+  };
+  entities.forEach((k, v) => s = s.replaceAll(k, v));
+  return s
+      .replaceAll(RegExp(r'[ \t]+\n'), '\n')
+      .replaceAll(RegExp(r'\n{3,}'), '\n\n')
+      .trim();
 }

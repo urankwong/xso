@@ -14,6 +14,14 @@ class JsTimeoutException implements Exception {
   String toString() => 'JsTimeoutException: exceeded $limit';
 }
 
+/// 宿主函数：JS 调用 → Dart 处理 → 返回值序列化回 JS
+typedef HostFunction = Future<Object?> Function(List<Object?> args);
+
+/// 插件持久化存储（env.storage）：按命名空间（源 id）隔离。
+/// load 返回该命名空间的 JSON 字符串；write 传 ns/key/value（key=null 表清空）。
+typedef StorageLoad = String? Function(String ns);
+typedef StorageWrite = void Function(String ns, String? key, String? value);
+
 /// JS 运行时抽象：source_engine 只依赖此接口，
 /// flutter_js 的具体实现在 app 层注入（QuickJsRuntimeImpl）。
 abstract class JsRuntime {
@@ -26,7 +34,8 @@ abstract class JsRuntime {
 
   /// 销毁运行时，释放资源。
   void dispose();
-}
 
-/// 宿主函数：JS 调用 → Dart 处理 → 返回值序列化回 JS
-typedef HostFunction = Future<Object?> Function(List<Object?> args);
+  /// 注入插件存储持久化（可选）。默认不实现 → env.storage 退化为会话内存，
+  /// 插件登录态重启即丢，故宿主应提供。
+  void registerStorage(StorageLoad load, StorageWrite save) {}
+}

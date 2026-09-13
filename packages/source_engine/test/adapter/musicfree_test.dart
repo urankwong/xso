@@ -5,7 +5,7 @@ import 'package:test/test.dart';
 void main() {
   test('适配器包装为内部 SearchableSource 并桥接 search', () async {
     final js = FakeJsRuntime(scriptResults: {
-      'JSON.stringify({name:': '{"name":"测试音源"}',
+      'JSON.stringify({': '{"name":"测试音源","vars":[]}',
       '__mfSearchTake':
           '{"isEnd":true,"data":[{"title":"测试词-歌曲","artist":"歌手","url":"https://play.com/1.mp3"}]}',
     });

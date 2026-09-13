@@ -28,7 +28,12 @@ class SearchSessionNotifier extends StateNotifier<SearchSession?> {
     // 记录搜索历史（重复关键词自动置顶）
     ref.read(appDbProvider).historyDao.record(keyword);
 
-    final sources = await ref.read(searchableSourcesProvider.future);
+    final all = await ref.read(searchableSourcesProvider.future);
+    // 类型筛选：只让 type 匹配的源参与（null = 全部）
+    final typeFilter = ref.read(searchTypeFilterProvider);
+    final sources = typeFilter == null
+        ? all
+        : all.where((s) => s.meta.type == typeFilter).toList();
     final orchestrator = ref.read(orchestratorProvider);
 
     await _sub?.cancel();
@@ -60,8 +65,40 @@ class SearchSessionNotifier extends StateNotifier<SearchSession?> {
     n.finished = s.finished;
     return n;
   }
+
+  /// 清空当前会话（切换类型筛选 / 首页入口进入时调用，不自动发起搜索）
+  Future<void> clear() async {
+    await _sub?.cancel();
+    state = null;
+  }
+
+  /// 中止当前搜索但保留已返回的结果（搜索页「停止」按钮）。
+  /// 只是取消订阅，不会抹掉用户已经看到的结果。
+  Future<void> cancel() async {
+    await _sub?.cancel();
+    _sub = null;
+    final s = state;
+    if (s == null) return;
+    s.finished = true;
+    state = _copy(s);
+  }
+
+  /// 是否存在进行中的搜索（用于决定要不要显示「停止」）
+  bool get running => state != null && !state!.finished;
 }
 
 final searchSessionProvider =
     StateNotifierProvider<SearchSessionNotifier, SearchSession?>(
         (ref) => SearchSessionNotifier(ref));
+
+/// 结果排序方式：综合（保持各源返回顺序）/ 按类型分组
+enum SearchSortMode { relevance, type }
+
+final searchSortModeProvider =
+    StateProvider<SearchSortMode>((ref) => SearchSortMode.relevance);
+
+/// 结果按来源筛选：null = 全部；否则只显示该 sourceId 的结果。
+///
+/// 只在已返回的结果里过滤，**不触发重新搜索**
+/// （结果都已经在内存里了，没必要再打一次网络）。
+final searchSourceFilterProvider = StateProvider<String?>((ref) => null);

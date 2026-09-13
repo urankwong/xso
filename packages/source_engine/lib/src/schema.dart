@@ -14,12 +14,80 @@ class Source {
   final SearchRule? search;
   final DetailRule? detail;
   final HooksRule? hooks;
+
+  /// 书籍详情元信息（Legado `ruleBookInfo`）：封面/简介/分类/最新章节…
+  final BookMetaRule? bookMeta;
+
+  /// 目录规则（Legado `ruleToc`）
+  final TocRule? toc;
+
+  /// 正文规则（Legado `ruleContent`）
+  final ContentRule? content;
+
+  /// 是否具备「在线阅读」能力：目录 + 正文都齐了才行
+  bool get canRead => toc != null && content != null;
+
   const Source({
     required this.meta,
     this.search,
     this.detail,
     this.hooks,
+    this.bookMeta,
+    this.toc,
+    this.content,
   });
+}
+
+/// 书籍详情元信息规则。字段全部可选：不同站点能提供的信息差异很大，
+/// 缺哪个就少显示哪个，不影响其余字段。
+class BookMetaRule {
+  final FieldRule? cover; // 封面图片地址
+  final FieldRule? intro; // 简介
+  final FieldRule? kind; // 分类/标签
+  final FieldRule? lastChapter; // 最新章节
+  final FieldRule? wordCount; // 字数
+  final FieldRule? status; // 连载状态
+  const BookMetaRule({
+    this.cover,
+    this.intro,
+    this.kind,
+    this.lastChapter,
+    this.wordCount,
+    this.status,
+  });
+
+  bool get isEmpty =>
+      cover == null &&
+      intro == null &&
+      kind == null &&
+      lastChapter == null &&
+      wordCount == null &&
+      status == null;
+}
+
+/// 目录规则：从目录页取出章节列表
+class TocRule {
+  /// 章节列表容器（相对目录页）
+  final String list;
+
+  /// 章节名（相对列表项）
+  final FieldRule name;
+
+  /// 章节链接（相对列表项）
+  final FieldRule url;
+
+  const TocRule({required this.list, required this.name, required this.url});
+}
+
+/// 正文规则：从章节页取出正文
+class ContentRule {
+  /// 正文选择器（相对章节页）；attr=html 时取 innerHtml
+  final FieldRule content;
+
+  /// 下一页链接（可选，长文分页的站点用）
+  final FieldRule? nextUrl;
+
+  const ContentRule({required this.content, this.nextUrl});
 }
 
 class SearchRule {
@@ -60,9 +128,33 @@ class ResultRule {
 }
 
 class FieldRule {
+  /// 首选选择器
   final String selector;
-  final String attr; // text | href | html
-  const FieldRule({required this.selector, this.attr = 'text'});
+
+  /// 取哪个属性：text | href | html | title | src | 其它 HTML 属性名
+  final String attr;
+
+  /// 兜底选择器链（Legado `||` 语义）：首选未命中或取到空值时依次尝试
+  final List<String> fallbackSelectors;
+
+  /// 提取结果的可选正则替换（Legado `##` 语义）：
+  /// 命中 replaceRegex 的部分替换为 replacement（缺省空串 = 删除）。
+  final String? replaceRegex;
+  final String? replacement;
+
+  const FieldRule({
+    required this.selector,
+    this.attr = 'text',
+    this.fallbackSelectors = const [],
+    this.replaceRegex,
+    this.replacement,
+  });
+
+  /// 完整候选链：首选 + 兜底
+  List<String> get candidates => [selector, ...fallbackSelectors];
+
+  /// JSON 模式下 selector 表示字段路径（jsonPath），与候选链语义不同
+  bool get hasReplace => replaceRegex != null && replaceRegex!.isNotEmpty;
 }
 
 class HooksRule {
@@ -87,7 +179,61 @@ Source parseSource(String json) {
   if (search == null) {
     throw SourceSchemaException('自有格式源必须包含 search 段');
   }
-  return Source(meta: meta, search: search, detail: detail, hooks: hooks);
+  return Source(
+    meta: meta,
+    search: search,
+    detail: detail,
+    hooks: hooks,
+    bookMeta: _parseBookMeta(root),
+    toc: _parseTocRule(root),
+    content: _parseContentRule(root),
+  );
+}
+
+/// 单个字段规则：`{"selector": "…", "attr": "text|href|html|src"}`
+FieldRule? _fieldFrom(dynamic raw, String path) {
+  if (raw == null) return null;
+  final m = _asMap(raw, path);
+  final sel = m['selector'];
+  if (sel is! String || sel.isEmpty) return null;
+  return FieldRule(selector: sel, attr: m['attr'] as String? ?? 'text');
+}
+
+BookMetaRule? _parseBookMeta(Map<String, dynamic> root) {
+  if (root['bookMeta'] == null) return null;
+  final m = _asMap(root['bookMeta'], 'bookMeta');
+  final r = BookMetaRule(
+    cover: _fieldFrom(m['cover'], 'bookMeta.cover'),
+    intro: _fieldFrom(m['intro'], 'bookMeta.intro'),
+    kind: _fieldFrom(m['kind'], 'bookMeta.kind'),
+    lastChapter: _fieldFrom(m['lastChapter'], 'bookMeta.lastChapter'),
+    wordCount: _fieldFrom(m['wordCount'], 'bookMeta.wordCount'),
+    status: _fieldFrom(m['status'], 'bookMeta.status'),
+  );
+  return r.isEmpty ? null : r;
+}
+
+TocRule? _parseTocRule(Map<String, dynamic> root) {
+  if (root['toc'] == null) return null;
+  final m = _asMap(root['toc'], 'toc');
+  final list = _reqStr(m, 'list', 'toc.list');
+  final name = _fieldFrom(m['name'], 'toc.name');
+  final url = _fieldFrom(m['url'], 'toc.url');
+  if (name == null || url == null) {
+    throw SourceSchemaException('toc.name 与 toc.url 必填');
+  }
+  return TocRule(list: list, name: name, url: url);
+}
+
+ContentRule? _parseContentRule(Map<String, dynamic> root) {
+  if (root['content'] == null) return null;
+  final m = _asMap(root['content'], 'content');
+  final c = _fieldFrom(m['content'], 'content.content');
+  if (c == null) {
+    throw SourceSchemaException('content.content 必填');
+  }
+  return ContentRule(
+      content: c, nextUrl: _fieldFrom(m['nextUrl'], 'content.nextUrl'));
 }
 
 SourceMeta _parseMeta(Map<String, dynamic> root) {

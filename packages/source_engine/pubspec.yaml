@@ -1,6 +1,7 @@
 name: source_engine
 description: 源引擎：schema、规则解释、JS 沙箱、格式适配器（纯 Dart）
 version: 0.1.0
+publish_to: none
 environment:
   sdk: ^3.5.0
 dependencies:

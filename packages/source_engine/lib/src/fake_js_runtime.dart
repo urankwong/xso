@@ -37,6 +37,10 @@ class FakeJsRuntime implements JsRuntime {
     _hostFns[name] = fn;
   }
 
+  /// 测试运行时不需要持久化，占位以满足 implements 契约
+  @override
+  void registerStorage(StorageLoad load, StorageWrite save) {}
+
   /// 测试辅助：直接触发已注册的宿主函数
   Future<Object?> invokeHost(String name, List<Object?> args) =>
       _hostFns[name]!(args);

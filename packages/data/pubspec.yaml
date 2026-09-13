@@ -1,6 +1,7 @@
 name: data
 description: 本地存储：drift 数据库、源仓库（纯 Dart）
 version: 0.1.0
+publish_to: none
 environment:
   sdk: ^3.5.0
 dependencies:

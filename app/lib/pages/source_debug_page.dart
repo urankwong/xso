@@ -76,6 +76,9 @@ class _SourceDebugPageState extends ConsumerState<SourceDebugPage> {
               Expanded(
                 child: TextField(
                   controller: _kw,
+                  textInputAction: TextInputAction.search,
+                  // 支持回车提交：输入完不用把手从键盘移到播放按钮上
+                  onSubmitted: (_) => _running ? null : _run(),
                   decoration: const InputDecoration(hintText: '测试关键词'),
                 ),
               ),

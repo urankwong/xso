@@ -6,12 +6,27 @@ import 'package:path_provider/path_provider.dart';
 import 'package:source_engine/source_engine.dart';
 import 'package:core/core.dart';
 import '../runtime/quickjs_runtime_impl.dart';
+import 'plugin_store.dart';
+import 'ua_provider.dart';
 
 final dioProvider = Provider<Dio>((ref) {
+  // UA 走 userAgentProvider：设置里改完 invalidate 即生效（无需重启）。
+  // 未就绪时先用内置桌面 UA，保证首屏搜索不受异步读取影响。
+  final ua = ref.watch(userAgentProvider).valueOrNull ??
+      UaPresets.of(UaPresets.defaultMode, '');
   final dio = Dio(BaseOptions(
     connectTimeout: const Duration(seconds: 10),
     receiveTimeout: const Duration(seconds: 10),
-    headers: {'User-Agent': 'Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36'},
+    headers: {
+      'User-Agent': ua,
+      // 完整浏览器头：只发 UA 而不带 Accept 系列，仍是明显的"脚本特征"，
+      // 不少站点据此返回 403。
+      'Accept':
+          'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+      'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+    },
+    followRedirects: true,
+    maxRedirects: 5,
   ));
   return dio;
 });
@@ -45,10 +60,32 @@ final fetcherProvider = Provider<Fetcher>((ref) {
   };
 });
 
+/// 取已预载的插件存储（main 启动时已 await pluginStoreProvider）
+PluginStore _pluginStore(Ref ref) =>
+    ref.read(pluginStoreProvider).requireValue;
+
+void _bindStorage(Ref ref, QuickJsRuntimeImpl rt) {
+  rt.registerStorage(
+    (ns) => _pluginStore(ref).loadStorage(ns),
+    (ns, key, value) => _pluginStore(ref).writeStorage(ns, key, value),
+  );
+}
+
 final jsRuntimeProvider = Provider<JsRuntime>((ref) {
   final rt = QuickJsRuntimeImpl();
+  _bindStorage(ref, rt);
   ref.onDispose(rt.dispose);
   return rt;
+});
+
+/// JS 源专用运行时工厂：每个 musicfree/lx 源独立实例
+final jsRuntimeFactoryProvider =
+    Provider<JsRuntime Function()>((ref) {
+  return () {
+    final rt = QuickJsRuntimeImpl(dio: ref.read(dioProvider));
+    _bindStorage(ref, rt);
+    return rt;
+  };
 });
 
 final sourceEngineProvider = Provider<SourceEngine>((ref) {

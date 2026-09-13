@@ -5,12 +5,14 @@ class StoredSource {
   final String id;
   final String format; // own | musicfree | lx | legado
   final String name; // 展示名（导入时记录）
+  final String type; // 内容类型：magnet/pan/music/book…（导入时记录）
   final bool enabled;
   final String file;
   const StoredSource({
     required this.id,
     required this.format,
     this.name = '',
+    this.type = '',
     required this.enabled,
     required this.file,
   });
@@ -26,12 +28,13 @@ class SourceRepository {
   String _safeId(String id) => id.replaceAll(RegExp(r'[^A-Za-z0-9_.-]'), '_');
 
   Future<void> save(String id,
-      {required String format, required String raw, String? name}) async {
+      {required String format, required String raw, String? name, String? type}) async {
     final file = File('$rootDir/${_safeId(id)}.json');
     await file.writeAsString(jsonEncode({
       'id': id,
       'format': format,
       'name': name ?? '',
+      'type': type ?? '',
       'enabled': true,
       'raw': raw,
     }));
@@ -48,6 +51,7 @@ class SourceRepository {
         id: m['id'] as String,
         format: m['format'] as String,
         name: m['name'] as String? ?? '',
+        type: m['type'] as String? ?? '',
         enabled: m['enabled'] as bool? ?? true,
         file: f.path,
       ));

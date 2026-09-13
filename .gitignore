@@ -11,3 +11,35 @@ android/.gradle/
 android/local.properties
 *.apk
 *.aab
+.preferences
+
+# --- 本地临时/调试产物（不入库）---
+tmp_*
+*.log
+analyze_now.txt
+zreadme.md
+test_sources.py
+
+# IDE / 工具元数据
+.arts/
+.jlsp/
+.project-meta/
+.workbuddy/
+.merkle-snapshot.json
+.tmp_ui.xml
+
+# 无关第三方独立仓库
+deepseek-harness-mobile/
+dsh-scan-remote/
+
+# 素材图与二进制依赖（本仓库不入库）
+vibe_images/
+app/quickjs_c_bridge.dll
+
+# 源引擎调试工具目录
+packages/*/tool/
+
+# shell 误建乱码文件
+0}).slice(0
+t.substring(0
+document.documentElement.outerHTML.substring(0

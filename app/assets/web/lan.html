@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+<title>局域网助手 · 聚合搜索</title>
+<style>
+  :root{
+    --bg:#141518; --panel:#1e1f23; --panel2:#24262a; --line:#33353a;
+    --text:#e6e6e6; --dim:#9a9da3; --acc:#2bd4b4;
+    --info:#2bd4b4; --warn:#e6b84a; --error:#ef6a6a;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);
+    font-family:system-ui,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif;font-size:14px}
+  header{padding:14px 18px;border-bottom:1px solid var(--line);
+    display:flex;align-items:center;gap:12px;flex-wrap:wrap;background:var(--panel)}
+  header h1{font-size:16px;margin:0;font-weight:600}
+  .badge{font-size:12px;padding:2px 8px;border-radius:999px;border:1px solid var(--line);color:var(--dim)}
+  .grow{flex:1}
+  input[type=text]{background:var(--panel2);border:1px solid var(--line);color:var(--text);
+    border-radius:8px;padding:6px 10px;font-size:13px;width:120px}
+  nav{display:flex;gap:6px;padding:8px 18px;border-bottom:1px solid var(--line);background:var(--panel)}
+  nav button{background:transparent;border:1px solid var(--line);color:var(--dim);
+    padding:6px 14px;border-radius:999px;cursor:pointer;font-size:13px}
+  nav button.on{background:var(--acc);color:#04201b;border-color:var(--acc);font-weight:600}
+  main{padding:16px 18px;max-width:960px;margin:0 auto}
+  .bar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px}
+  .btn{background:var(--panel2);border:1px solid var(--line);color:var(--text);
+    padding:7px 12px;border-radius:8px;cursor:pointer;font-size:13px}
+  .btn:hover{border-color:var(--acc)}
+  .btn.primary{background:var(--acc);color:#04201b;border-color:var(--acc);font-weight:600}
+  .btn.danger{color:var(--error);border-color:var(--error)}
+  .btn:disabled{opacity:.4;cursor:not-allowed}
+  textarea{width:100%;min-height:96px;background:var(--panel2);border:1px solid var(--line);
+    color:var(--text);border-radius:8px;padding:10px;font-size:13px;resize:vertical;font-family:ui-monospace,Consolas,monospace}
+  table{width:100%;border-collapse:collapse}
+  th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);font-size:13px;vertical-align:middle}
+  th{color:var(--dim);font-weight:500}
+  .tag{font-size:11px;padding:1px 7px;border-radius:6px;background:var(--panel2);border:1px solid var(--line);color:var(--dim)}
+  .off{opacity:.5}
+  .log{font-family:ui-monospace,Consolas,monospace;font-size:12.5px;line-height:1.6}
+  .log .t{color:var(--dim)}
+  .log .lvl{font-weight:600}
+  .log .info .lvl{color:var(--info)}
+  .log .warn .lvl{color:var(--warn)}
+  .log .error .lvl{color:var(--error)}
+  #logbox{background:var(--panel);border:1px solid var(--line);border-radius:10px;
+    height:56vh;overflow:auto;padding:10px 12px}
+  #logbox .row{white-space:pre-wrap;word-break:break-all}
+  .muted{color:var(--dim)}
+  code{background:var(--panel2);padding:1px 5px;border-radius:5px;font-size:12px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px;margin-bottom:14px}
+  .card h3{margin:0 0 8px;font-size:14px}
+  ul.api{margin:6px 0 0;padding-left:18px;line-height:1.9;font-size:13px}
+  .toast{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);background:var(--panel2);
+    border:1px solid var(--acc);color:var(--text);padding:8px 16px;border-radius:999px;font-size:13px;
+    opacity:0;transition:.2s;pointer-events:none}
+  .toast.show{opacity:1}
+  .hidden{display:none}
+</style>
+</head>
+<body>
+<header>
+  <h1>局域网助手</h1>
+  <span class="badge" id="connBadge">未连接</span>
+  <div class="grow"></div>
+  <label class="muted">令牌</label>
+  <input type="text" id="token" placeholder="4 位令牌" maxlength="8" />
+</header>
+<nav>
+  <button data-tab="sources" class="on">源管理</button>
+  <button data-tab="logs">实时日志</button>
+  <button data-tab="about">关于</button>
+</nav>
+<main>
+  <!-- 源管理 -->
+  <section id="sources">
+    <div class="bar">
+      <button class="btn" id="reload">刷新列表</button>
+      <button class="btn" id="exportJson">复制全部源 JSON</button>
+      <span class="muted" id="srcHint"></span>
+    </div>
+    <div class="card" id="importCard">
+      <h3>批量导入源</h3>
+      <textarea id="rawBox" placeholder="粘贴一个源的完整内容（自有 JSON / Legado / MusicFree / 洛雪 JS）"></textarea>
+      <div class="bar" style="margin-top:8px">
+        <input type="text" id="importName" placeholder="可选：源名称" style="width:200px" />
+        <button class="btn primary" id="doImport">导入</button>
+      </div>
+    </div>
+    <table>
+      <thead><tr><th>名称</th><th>类型</th><th>格式</th><th>状态</th><th></th></tr></thead>
+      <tbody id="srcBody"></tbody>
+    </table>
+  </section>
+
+  <!-- 实时日志 -->
+  <section id="logs" class="hidden">
+    <div class="bar">
+      <label><input type="checkbox" id="autoscroll" checked /> 自动滚动</label>
+      <button class="btn" id="pause">暂停</button>
+      <button class="btn" id="clearLog">清屏</button>
+      <span class="muted" id="logHint"></span>
+    </div>
+    <div id="logbox" class="log"></div>
+  </section>
+
+  <!-- 关于 -->
+  <section id="about" class="hidden">
+    <div class="card">
+      <h3>用法</h3>
+      <p class="muted">在 App「我的 → 局域网助手」开启服务，并确保手机与电脑连同一 WiFi。
+        浏览器打开本页后，把 App 显示的 4 位令牌填入右上角（若已开启令牌）。
+        各能力需在 App 内对应权限开关打开后才可用。</p>
+    </div>
+    <div class="card">
+      <h3>REST API</h3>
+      <ul class="api">
+        <li><code>GET /api/status</code> 服务状态与权限</li>
+        <li><code>GET /api/sources</code> 源列表</li>
+        <li><code>POST /api/sources/import</code> 导入 <code>{raw,name?}</code> 或 <code>{urls:[]}</code></li>
+        <li><code>PATCH /api/sources/{id}</code> <code>{enabled:bool}</code> 启停</li>
+        <li><code>DELETE /api/sources/{id}</code> 删除源</li>
+        <li><code>GET /api/search?kw=&amp;type=&amp;page=</code> 聚合搜索</li>
+        <li><code>POST /api/download</code> <code>{url,title,artist?,qualityLabel?}</code> 入队下载</li>
+        <li><code>GET /api/downloads</code> 下载任务列表</li>
+        <li><code>GET /api/logs</code> 日志快照</li>
+        <li><code>GET /api/logs/stream</code> 实时日志（SSE）</li>
+      </ul>
+      <p class="muted">请求 /api/* 需带 <code>?token=</code> 或 <code>Authorization: Bearer &lt;token&gt;</code>。</p>
+    </div>
+  </section>
+</main>
+<div class="toast" id="toast"></div>
+<script>
+(function(){
+  var perms={}, tokenVal='';
+  var els={};
+  ['connBadge','token','rawBox','importName','srcBody','srcHint','logbox','logHint',
+   'reload','exportJson','doImport','importCard','autoscroll','pause','clearLog','toast']
+   .forEach(function(id){ els[id]=document.getElementById(id); });
+
+  function toast(m){ els.toast.textContent=m; els.toast.classList.add('show');
+    setTimeout(function(){ els.toast.classList.remove('show'); },1800); }
+
+  // 读取 URL 里的 token（?token=）
+  var urlTok = new URLSearchParams(location.search).get('token');
+  if(urlTok){ els.token.value=urlTok; }
+  tokenVal=els.token.value.trim();
+  els.token.addEventListener('input',function(){ tokenVal=els.token.value.trim(); refresh(); });
+
+  function api(path, opts){
+    opts=opts||{}; opts.headers=opts.headers||{};
+    if(tokenVal){ opts.headers['Authorization']='Bearer '+tokenVal;
+      var sep=path.indexOf('?')>=0?'&':'?'; path=path+sep+'token='+encodeURIComponent(tokenVal); }
+    return fetch(path, opts).then(function(r){
+      var ct=r.headers.get('content-type')||'';
+      return (ct.indexOf('application/json')>=0? r.json():r.text()).then(function(b){
+        return {status:r.status, body:b}; });
+    });
+  }
+
+  // ---------- tabs ----------
+  document.querySelectorAll('nav button').forEach(function(b){
+    b.addEventListener('click',function(){
+      document.querySelectorAll('nav button').forEach(function(x){x.classList.remove('on')});
+      b.classList.add('on');
+      ['sources','logs','about'].forEach(function(s){
+        document.getElementById(s).classList.toggle('hidden', s!==b.dataset.tab); });
+      if(b.dataset.tab==='logs'){ startLog(); } else { stopLog(); }
+    });
+  });
+
+  // ---------- 源管理 ----------
+  function fmtType(t){ var m={magnet:'磁力',ed2k:'电驴',pan:'网盘',music:'音乐',book:'书籍',game:'游戏',audiobook:'有声'}; return m[t]||t||'-'; }
+
+  function renderSources(list){
+    els.srcBody.innerHTML='';
+    list.forEach(function(s){
+      var tr=document.createElement('tr');
+      if(!s.enabled) tr.className='off';
+      var canManage=perms.allowManageSource;
+      tr.innerHTML='<td>'+esc(s.name||s.id)+'</td>'+
+        '<td><span class="tag">'+esc(fmtType(s.type))+'</span></td>'+
+        '<td><span class="tag">'+esc(s.format)+'</span></td>'+
+        '<td>'+(s.enabled?'<span style="color:var(--info)">已启用</span>':'<span class="muted">已停用</span>')+'</td>'+
+        '<td style="text-align:right"></td>';
+      var act=tr.lastElementChild;
+      var sw=document.createElement('button');
+      sw.className='btn'; sw.textContent=s.enabled?'停用':'启用';
+      sw.disabled=!canManage;
+      sw.onclick=function(){ patchSource(s.id,!s.enabled); };
+      var del=document.createElement('button');
+      del.className='btn danger'; del.textContent='删除'; del.style.marginLeft='6px';
+      del.disabled=!canManage;
+      del.onclick=function(){ delSource(s.id, s.name||s.id); };
+      act.appendChild(sw); act.appendChild(del);
+      els.srcBody.appendChild(tr);
+    });
+  }
+  function esc(x){ return String(x==null?'':x).replace(/[&<>"]/g,function(c){
+    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];}); }
+
+  function patchSource(id,enabled){
+    api('/api/sources/'+encodeURIComponent(id),
+      {method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:enabled})})
+      .then(function(r){ if(r.body&&r.body.ok){ toast(enabled?'已启用':'已停用'); reloadSources(); } else toast((r.body&&r.body.error)||'操作失败'); });
+  }
+  function delSource(id,name){
+    if(!confirm('确定删除「'+name+'」？')) return;
+    api('/api/sources/'+encodeURIComponent(id),{method:'DELETE'})
+      .then(function(r){ if(r.body&&r.body.ok){ toast('已删除'); reloadSources(); } else toast((r.body&&r.body.error)||'删除失败'); });
+  }
+  function reloadSources(){
+    api('/api/sources').then(function(r){
+      if(r.status===403){ els.srcHint.textContent=(r.body&&r.body.error)||'无权限'; els.srcBody.innerHTML=''; return; }
+      renderSources((r.body&&r.body.sources)||[]);
+    });
+  }
+  els.reload.onclick=reloadSources;
+  els.doImport.onclick=function(){
+    var raw=els.rawBox.value.trim();
+    if(!raw){ toast('请先粘贴源内容'); return; }
+    els.doImport.disabled=true;
+    api('/api/sources/import',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({raw:raw,name:els.importName.value.trim()||null})})
+      .then(function(r){
+        els.doImport.disabled=false;
+        var b=r.body||{};
+        if(b.ok){ var n=(b.imported||[]).length; toast('导入 '+(b.imported[0]&&b.imported[0].name||'源')+(n>1?(' 等 '+n+' 个'):''));
+          els.rawBox.value=''; els.importName.value=''; reloadSources(); }
+        else toast(b.error||('HTTP '+r.status));
+      }).catch(function(){ els.doImport.disabled=false; toast('导入请求失败'); });
+  };
+  els.exportJson.onclick=function(){
+    api('/api/sources').then(function(r){
+      var json=JSON.stringify((r.body&&r.body.sources)||[],null,2);
+      copy(json); toast('已复制源列表 JSON'); });
+  };
+  function copy(text){
+    if(navigator.clipboard&&navigator.clipboard.writeText){ navigator.clipboard.writeText(text); return; }
+    var ta=document.createElement('textarea'); ta.value=text; document.body.appendChild(ta);
+    ta.select(); try{document.execCommand('copy');}catch(e){} document.body.removeChild(ta);
+  }
+
+  // ---------- 实时日志 ----------
+  var es=null, paused=false, buffer='';
+  function lineHtml(e){
+    var time=new Date(e.time).toLocaleTimeString();
+    var lvl=(e.level||'info');
+    return '<div class="row '+lvl+'"><span class="t">'+time+'</span> '+
+      '<span class="lvl">'+lvl.toUpperCase()+'</span> '+
+      '<span class="t">['+esc(e.tag)+']</span> '+esc(e.message)+'</div>';
+  }
+  function appendLog(html){
+    if(paused){ buffer+=html; return; }
+    els.logbox.insertAdjacentHTML('beforeend',html);
+    trimLog();
+    if(els.autoscroll.checked) els.logbox.scrollTop=els.logbox.scrollHeight;
+  }
+  function trimLog(){ while(els.logbox.childElementCount>600){ els.logbox.removeChild(els.logbox.firstChild); } }
+  function startLog(){
+    if(es) return;
+    es=new EventSource('/api/logs/stream'+(tokenVal?('?token='+encodeURIComponent(tokenVal)):''));
+    es.onmessage=function(ev){ try{ appendLog(lineHtml(JSON.parse(ev.data))); }catch(e){} };
+    es.onerror=function(){ els.logHint.textContent='日志流断开，重试中…'; };
+    els.logHint.textContent='实时接收中';
+  }
+  function stopLog(){ if(es){ es.close(); es=null; } els.logHint.textContent=''; }
+  els.pause.onclick=function(){
+    paused=!paused; els.pause.textContent=paused?'继续':'暂停';
+    if(!paused && buffer){ els.logbox.insertAdjacentHTML('beforeend',buffer); buffer=''; trimLog();
+      if(els.autoscroll.checked) els.logbox.scrollTop=els.logbox.scrollHeight; }
+  };
+  els.clearLog.onclick=function(){ els.logbox.innerHTML=''; buffer=''; };
+
+  // ---------- 状态 / 启动 ----------
+  function refresh(){
+    api('/api/status').then(function(r){
+      if(r.status===403){ els.connBadge.textContent='令牌错误'; els.connBadge.style.color='var(--error)'; return; }
+      var b=r.body||{};
+      perms=b.perms||{};
+      els.connBadge.textContent=(b.enabled?('在线 '+(b.ip||'')+':'+(b.port||'')):'已停止');
+      els.connBadge.style.color='var(--info)';
+      els.importCard.classList.toggle('off', !perms.allowImportSource);
+      els.srcHint.textContent = perms.allowManageSource?'':'（管理源权限未开启）';
+      els.logHint.textContent = perms.allowReadLog?'':'（读取日志权限未开启）';
+      reloadSources();
+    });
+  }
+  refresh();
+})();
+</script>
+</body>
+</html>

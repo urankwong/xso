@@ -7,4 +7,5 @@ export 'src/engine.dart';
 export 'src/adapter/detector.dart';
 export 'src/adapter/musicfree.dart';
 export 'src/adapter/lx.dart';
+export 'src/adapter/oiapi.dart';
 export 'src/adapter/legado.dart';

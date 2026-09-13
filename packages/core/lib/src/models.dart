@@ -1,5 +1,26 @@
 /// 源类型开放枚举：新增内容类型=新增枚举值，搜索机制不变
-enum SourceType { pan, magnet, ed2k, book, music, game }
+///
+/// comic / video 对应 Legado 的图片型（bookSourceType=2，漫画）与
+/// 视频型（bookSourceType=4，影视）书源 —— 阅读生态里这两类是一等公民，
+/// 此前缺失会把它们错误归类为 book。
+///
+/// novel 对应 Legado 的文本型书源（bookSourceType=0，**网文/小说**）。
+/// 它与 book（电子书**文件**，如 zlib / 安娜档案馆的 epub/pdf）是两种东西：
+/// 小说是"追更阅读"的内容，书籍是"下载文件"的资源。此前共用 book
+/// 导致两类结果混排在同一个列表里，用户无法区分也无法分别筛选。
+/// 追加在末尾以避免依赖枚举序号的持久化逻辑受影响。
+enum SourceType {
+  pan,
+  magnet,
+  ed2k,
+  book,
+  music,
+  game,
+  audiobook,
+  comic,
+  video,
+  novel,
+}
 
 /// 一次搜索请求
 class SearchQuery {
