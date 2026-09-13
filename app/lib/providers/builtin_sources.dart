@@ -189,9 +189,17 @@ class BuiltinSources {
     return [for (final p in _manifest) await rootBundle.loadString(p)];
   }
 
-  /// 内置源清单指纹。
+  /// 内置源清单版本号。
   ///
-  /// 用来替代"首启只导入一次"的布尔标记：清单没变时跳过（不拖慢启动、
+  /// **每次修改 `assets/sources/` 下的内置源「内容」（不只是增删文件）都要 +1**。
+  /// 原因：清单指纹基于文件**路径**，改内容不改文件名时指纹不变，
+  /// 老用户升级后就不会重新导入，拿到的一直是旧版本的源
+  /// （例如 Legado 文本型源的类型从 book 改为 novel 这类映射变更）。
+  static const manifestVersion = 2;
+
+  /// 内置源清单指纹：用于判断「是否需要重新导入」。
+  ///
+  /// 替代原先"首启只导入一次"的布尔标记：清单没变时跳过（不拖慢启动、
   /// 也不会把用户删过的源塞回来），清单变了才重新导入 ——
   /// 否则每次发版新增内置源，老用户升级后永远拿不到。
   static String manifestSignature() {
@@ -202,7 +210,7 @@ class BuiltinSources {
       }
       h = (h * 7 + 1) & 0x3fffffff;
     }
-    return '${_manifest.length}-$h';
+    return 'v$manifestVersion-${_manifest.length}-$h';
   }
 
   /// 导入内置源到仓库；已存在同 id 的源跳过。返回新导入数量。
@@ -245,7 +253,16 @@ class BuiltinSources {
             type = _jsTypes[base] ?? 'music';
         }
         ids.add(id);
-        if (existingIds.contains(id)) continue;
+        if (existingIds.contains(id)) {
+          // 已存在也要刷新元信息：内置源的**类型映射**会随版本更新
+          // （如 Legado 文本型源由 book 改为 novel）。只跳过不更新的话，
+          // 老用户升级后仍用着旧映射。这里只改 name/type，保留 raw 与
+          // 用户的启用状态 —— 整体覆盖会抹掉用户对内置源的改动。
+          try {
+            await repo.updateMeta(id, name: name, type: type);
+          } catch (_) {}
+          continue;
+        }
         await repo.save(id,
             format: format.name, raw: raw, name: name, type: type);
         imported++;

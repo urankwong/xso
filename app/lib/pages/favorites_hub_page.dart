@@ -144,7 +144,7 @@ class _FavoritesHubPageState extends ConsumerState<FavoritesHubPage> {
           _tile(
             icon: Icons.star,
             title: '本应用收藏',
-            subtitle: '搜索时收藏的磁力 / 网盘 / 音乐链接',
+            subtitle: '搜索时收藏的资源（音乐/小说/书籍/漫画/网盘/磁力）',
             onTap: () => Navigator.push(context,
                 MaterialPageRoute(builder: (_) => const FavoritesPage())),
           ),

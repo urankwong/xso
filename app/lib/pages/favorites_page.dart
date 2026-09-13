@@ -1,4 +1,5 @@
 import 'package:core/core.dart';
+import 'package:data/data.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -134,6 +135,7 @@ class _FavoritesPageState extends ConsumerState<FavoritesPage> {
                 ],
               ),
             ),
+            _buildTypeChips(scheme),
             Expanded(
               child: StreamBuilder(
                 stream: db.favoriteDao.watchAll(),
@@ -240,6 +242,40 @@ class _FavoritesPageState extends ConsumerState<FavoritesPage> {
 
   // ── 类型识别与点击分发 ──────────────────────────────────────────
 
+  /// 收藏类型筛选 chips：收藏此前完全无分类，音乐/小说/磁力混排
+  Widget _buildTypeChips(ColorScheme scheme) {
+    const types = <(String?, String)>[
+      (null, '全部'),
+      ('music', '音乐'),
+      ('audiobook', '有声'),
+      ('novel', '小说'),
+      ('book', '书籍'),
+      ('comic', '漫画'),
+      ('video', '影视'),
+      ('pan', '网盘'),
+      ('magnet', '磁力'),
+      ('ed2k', '电驴'),
+    ];
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 4, 12, 4),
+      child: Wrap(
+        spacing: 6,
+        runSpacing: 4,
+        children: [
+          for (final (v, label) in types)
+            FilterChip(
+              label: Text(label),
+              selected: _filterType == v,
+              showCheckmark: true,
+              visualDensity: VisualDensity.compact,
+              selectedColor: scheme.primary.withValues(alpha: 0.18),
+              onSelected: (_) => setState(() => _filterType = v),
+            ),
+        ],
+      ),
+    );
+  }
+
   /// 收藏记录的 type 存的是 SourceType.name 字符串
   SourceType _typeOf(Favorite f) => SourceType.values.firstWhere(
         (t) => t.name == f.type,
@@ -342,3 +378,4 @@ class _FavoritesPageState extends ConsumerState<FavoritesPage> {
             const SnackBar(content: Text('已复制链接，可粘贴到对应应用打开')));
     }
   }
+}

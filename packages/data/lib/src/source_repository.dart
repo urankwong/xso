@@ -68,6 +68,17 @@ class SourceRepository {
   Future<void> setEnabled(String id, bool enabled) async =>
       _mutate(id, (m) => m['enabled'] = enabled);
 
+  /// 只更新展示名/类型，保留 raw 内容与用户的启用状态。
+  ///
+  /// 用途：内置源的**类型映射**可能随版本变化（例如 Legado 文本型源
+  /// 从 book 改成 novel），已导入的源需要刷新 type；但整体覆盖会连带
+  /// 抹掉用户对内置源的改动与禁用状态，所以单独开一个轻量接口。
+  Future<void> updateMeta(String id, {String? name, String? type}) =>
+      _mutate(id, (m) {
+        if (name != null && name.isNotEmpty) m['name'] = name;
+        if (type != null && type.isNotEmpty) m['type'] = type;
+      });
+
   Future<void> delete(String id) async {
     final file = File('$rootDir/${_safeId(id)}.json');
     if (await file.exists()) await file.delete();

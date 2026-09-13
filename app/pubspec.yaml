@@ -1,7 +1,7 @@
 name: app
 description: 聚合搜索 App 壳
 publish_to: none
-version: 0.1.0+1
+version: 0.1.0+2
 environment:
   sdk: ^3.5.0
 dependencies:
@@ -22,6 +22,11 @@ dependencies:
   url_launcher: ^6.3.1
   shared_preferences: ^2.3.0
   public_file_saver: ^1.1.0
+  # 注：下载后「打开文件」试过 open_filex，但其 android/build.gradle 固定了
+  # `classpath 'com.android.tools.build:gradle:8.1.0'`，与本项目的 AGP 9.1
+  # 不兼容（构建报 "'kotlin-android' plugin requires one of the Android
+  # Gradle plugins"），已回退。当前用 url_launcher 尝试打开 file:// 链接，
+  # 失败时退回「复制路径」。后续再找与 AGP 9 兼容的 file-opener 插件。
   gbk_codec: ^0.4.0
   just_audio: ^0.10.0
   just_audio_background: ^0.0.1-beta.17

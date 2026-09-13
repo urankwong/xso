@@ -1,6 +1,9 @@
+import 'dart:io' show File;
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../providers/downloads.dart';
 import '../widgets/download_confirm.dart';
 
@@ -261,28 +264,41 @@ class _TaskCard extends ConsumerWidget {
           child: const Text('移除'),
         );
       case DownloadStatus.done:
-        action = OutlinedButton(
-          style: OutlinedButton.styleFrom(
-            visualDensity: VisualDensity.compact,
-            padding: const EdgeInsets.symmetric(horizontal: 12),
-            shape: const StadiumBorder(),
-          ),
-          // 暂未引入 open_file，不能真的拉起外部应用；
-          // 与其挂一个点了只弹路径的「打开」，不如做名副其实的「复制路径」。
-          onPressed: () async {
-            final path = task.savedPath;
-            if (path == null || path.isEmpty) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('未记录保存路径')));
-              return;
-            }
-            await Clipboard.setData(ClipboardData(text: path));
-            if (context.mounted) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('已复制文件路径，可在文件管理器中打开')));
-            }
-          },
-          child: const Text('复制路径'),
+        action = Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // 次要动作：复制路径（原来是主按钮，现在降级为图标，
+            // 因为用户要的是"打开文件"而不是"拿到一个路径字符串"）
+            IconButton(
+              visualDensity: VisualDensity.compact,
+              tooltip: '复制路径',
+              icon: const Icon(Icons.copy, size: 18),
+              onPressed: () async {
+                final path = task.savedPath;
+                if (path == null || path.isEmpty) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('未记录保存路径')));
+                  return;
+                }
+                await Clipboard.setData(ClipboardData(text: path));
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('已复制文件路径')));
+                }
+              },
+            ),
+            const SizedBox(width: 4),
+            // 主按钮：唤起系统应用打开（音频→音乐播放器、epub/pdf→阅读器…）
+            OutlinedButton(
+              style: OutlinedButton.styleFrom(
+                visualDensity: VisualDensity.compact,
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                shape: const StadiumBorder(),
+              ),
+              onPressed: () => openDownloadedFile(context, task.savedPath),
+              child: const Text('打开'),
+            ),
+          ],
         );
       case DownloadStatus.failed:
         action = FilledButton.tonal(
@@ -412,4 +428,47 @@ class _TaskCard extends ConsumerWidget {
     final digits = (i == 0 || v >= 100) ? 0 : 1;
     return '${v.toStringAsFixed(digits)} ${units[i]}';
   }
+}
+
+/// 打开已下载的文件。
+///
+/// 现状说明：**没有引入 file-opener 插件** —— 试过 `open_filex`，但它的
+/// `android/build.gradle` 固定了 AGP 8.1.0，与项目的 AGP 9.1 冲突，
+/// 构建直接失败（"'kotlin-android' plugin requires one of the Android
+/// Gradle plugins"），只能回退。
+///
+/// 因此这里用 `url_launcher` 尝试打开 `file://`；系统有能处理该 MIME 的
+/// 应用时会正常唤起（音频→音乐播放器、epub/pdf→阅读器）。若打不开
+/// （Android 7+ 对直接暴露 file:// 有 FileUriExposedException 限制，
+/// 或文件在应用私有目录），则**自动退回复制路径**并给出可操作提示，
+/// 不让用户点了没反应。
+Future<void> openDownloadedFile(BuildContext context, String? path) async {
+  final messenger = ScaffoldMessenger.of(context);
+  if (path == null || path.isEmpty) {
+    messenger.showSnackBar(const SnackBar(content: Text('未记录保存路径')));
+    return;
+  }
+  if (!File(path).existsSync()) {
+    messenger.showSnackBar(
+        const SnackBar(content: Text('文件不存在（可能已被移动或删除）')));
+    return;
+  }
+
+  var opened = false;
+  try {
+    final uri = Uri.file(path);
+    opened =
+        await canLaunchUrl(uri) && await launchUrl(uri, mode: LaunchMode.externalApplication);
+  } catch (_) {
+    opened = false;
+  }
+  if (opened) return;
+
+  // 退路：复制路径，用户可在文件管理器里打开
+  await Clipboard.setData(ClipboardData(text: path));
+  messenger.showSnackBar(const SnackBar(
+    content: Text('系统没有可直接打开该文件的程序，已复制路径。\n'
+        '提示：若文件在应用私有目录，请到「设置 → 下载保存位置」改为「系统下载」'),
+    duration: Duration(seconds: 6),
+  ));
 }

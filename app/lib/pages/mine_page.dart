@@ -141,7 +141,7 @@ class MinePage extends ConsumerWidget {
             icon: Icons.devices,
             // 入口名与落地页标题保持一致（落地页 AppBar 标题是「设置」）
             title: '设置',
-            subtitle: 'User-Agent 等',
+            subtitle: '下载保存位置、浏览器标识等',
             onTap: () => _push(context, const SettingsPage()),
           ),
           row(
