@@ -76,4 +76,7 @@ cd app && flutter test
 
 ## License
 
-[MIT](LICENSE)
+本项目以 **GNU AGPL-3.0**（Affero General Public License v3.0）授权，完整条款见 [LICENSE](LICENSE)。
+
+- 分发、或以网络服务形式提供本程序的衍生版本，均须以相同的 AGPL-3.0 许可公开其完整源代码。
+- 通过 QuickJS 沙箱动态加载的第三方源脚本（Legado / 洛雪 / MusicFree 等）作为独立数据使用，其许可由源提供者自行决定，不因本项目而被传染。
