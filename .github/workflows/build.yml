@@ -7,8 +7,8 @@ on:
   workflow_dispatch: {}
 
 # 说明：内置源不放在本公开仓，构建时从独立私有仓拉入 app/assets/sources。
-# 需在 本仓 Settings → Secrets and variables → Actions 新建 secret：
-#   token = 一枚只读 PAT，仅对源内容仓授予 Contents: Read-only。
+# 拉取用一把「只读凭据」：公钥已加到源内容仓(只读)，私钥存于本仓
+# CI 用该凭据通过 SSH 克隆源内容仓，权限最小。
 
 jobs:
   build:
@@ -17,11 +17,11 @@ jobs:
       - name: Checkout 公开代码
         uses: actions/checkout@v4
 
-      - name: 拉取内置源(私有仓)
+      - name: 拉取内置源(只读凭据)
         uses: actions/checkout@v4
         with:
           repository: urankwong/xso-sources
-          token: ${{ secrets.SOURCES_TOKEN }}
+          ssh-key: ${{ secrets.SOURCES_SSH_KEY }}
           ref: main
           path: app/assets/sources
 
