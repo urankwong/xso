@@ -208,6 +208,57 @@ void main() {
     expect(src.bookMeta!.kind, isNotNull); // 静态规则照常
   });
 
+  test('~= 正则属性匹配展开为 CSS 候选选择器', () {
+    // legado 的 `~=` 是"属性值匹配正则"，CSS 无对应语法；
+    // 简单的 a|b|c 展开成多个 *= 选择器（CSS 逗号即"或"）。
+    final src = LegadoAdapter().translate(jsonEncode({
+      'bookSourceUrl': 'https://book.example.com',
+      'bookSourceName': '正则属性源',
+      'searchUrl': 'https://book.example.com/s?q={{key}}',
+      'ruleSearch': {
+        'bookList': '@css:div',
+        'name': '@css:h3@text',
+        'bookUrl': 'a@href',
+      },
+      'ruleBookInfo': {
+        'kind': '[property~=category|status|tags]@content',
+        'lastChapter': r'[property~=las?test_chapter_name]@content',
+      },
+    }));
+    expect(src.bookMeta!.kind!.selector, contains('[property*="category"]'));
+    expect(src.bookMeta!.kind!.selector, contains('[property*="tags"]'));
+    expect(src.bookMeta!.kind!.attr, 'content');
+    // 含 `?` 的复杂正则不做转换 → 该字段降级为 null（不显示）
+    expect(src.bookMeta!.lastChapter, isNull);
+  });
+
+  test('属性名简写（text/href）作用于元素自身', () {
+    // 目录容器已定位到 <a> 时，legado 规则直接写 text/href
+    final src = LegadoAdapter().translate(jsonEncode({
+      'bookSourceUrl': 'https://book.example.com',
+      'bookSourceName': '简写源',
+      'searchUrl': 'https://book.example.com/s?q={{key}}',
+      'ruleSearch': {
+        'bookList': '@css:div',
+        'name': '@css:h3@text',
+        'bookUrl': 'a@href',
+      },
+      'ruleToc': {
+        'chapterList': '#chapterList.-1@a',
+        'chapterName': 'text',
+        'chapterUrl': 'href',
+      },
+    }));
+    expect(src.toc, isNotNull);
+    // `@a` 是取子元素（转后代选择器），不是属性
+    expect(src.toc!.list, '#chapterList a');
+    // 简写 → 空选择器（作用于元素自身）
+    expect(src.toc!.name.selector, isEmpty);
+    expect(src.toc!.name.attr, 'text');
+    expect(src.toc!.url.selector, isEmpty);
+    expect(src.toc!.url.attr, 'href');
+  });
+
   test('stripTags 把正文 HTML 转成可读纯文本', () {
     final html = '<div><p>第一段</p><p>第二段</p>'
         '<br>换行&amp;实体&nbsp;结束</div>';

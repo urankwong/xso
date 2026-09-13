@@ -191,6 +191,10 @@ class LegadoAdapter {
     if (s.isEmpty) return null;
     if (_extractJs(s) != null) return null;
     if (s.contains('&&') || s.contains('{{js')) return null;
+    // `~=` 是"属性值匹配正则"：简单的 a|b|c 能被展开成 CSS，复杂的不能。
+    // 展不开时必须降级为 null —— 否则会留下一个 `[property~=las?test_...]`
+    // 这种"看着像选择器、实际永远匹配不到"的规则（静默失效比不显示更糟）。
+    if (s.contains('~=') && _expandRegexAttr(s).contains('~=')) return null;
     // 属性名简写 → 作用于元素自身（空选择器由解释器按"当前元素"处理）
     if (_knownAttrs.contains(s)) {
       return FieldRule(selector: '', attr: s);
@@ -531,11 +535,39 @@ class LegadoAdapter {
         'return JSON.stringify(__rows);';
   }
 
+  /// 把 legado 的 `[attr~=正则]` 展开成 CSS 能表达的候选选择器。
+  ///
+  /// legado 里 `~=` 不是 CSS 的"包含单词"，而是**属性值匹配正则**
+  /// （如 `[property~=category|status|tags]`）。CSS 没有正则属性选择器，
+  /// 但对最常见的 `a|b|c` 形式可以展开成多个 `*=` 选择器 ——
+  /// CSS 逗号分隔本身就是"或"，配合候选链/取首个匹配即可得到正确结果。
+  /// 含 `?`/`\d` 等复杂正则的不做转换（保持原样，由上层降级为 null，
+  /// 宁可不显示该字段，也不要给出错误内容）。
+  static String _expandRegexAttr(String rule) {
+    return rule.replaceAllMapped(
+      RegExp(r"""\[\s*([\w-]+)\s*~=\s*([^\]"']+?)\s*\]"""),
+      (m) {
+        final attr = m.group(1)!;
+        final val = m.group(2)!;
+        // 只处理纯"或"的简单值
+        if (!RegExp(r'^[A-Za-z0-9_\-| ]+$').hasMatch(val)) return m.group(0)!;
+        final parts = val
+            .split('|')
+            .map((e) => e.trim())
+            .where((e) => e.isNotEmpty)
+            .toList();
+        if (parts.length < 2) return m.group(0)!;
+        return parts.map((p) => '[$attr*="$p"]').join(',');
+      },
+    );
+  }
+
   /// 把一条 Legado 规则解析为结构化 FieldRule：
   /// - `||` 拆成候选链，取首个命中且非空的值
   /// - `##regex##replacement`（或 `##regex` 表示删除）转成正则替换
   FieldRule _buildFieldRule(String rule) {
-    var core = rule;
+    // `[attr~=a|b|c]` → 多候选（CSS 逗号=或），必须在拆 `||` 之前做
+    var core = _expandRegexAttr(rule);
     String? regex;
     String? replacement;
     final h = core.indexOf('##');

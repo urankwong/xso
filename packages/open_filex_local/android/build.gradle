@@ -1,0 +1,44 @@
+group 'com.crazecoder.openfile'
+version '1.0-SNAPSHOT'
+
+// 本包是 open_filex 4.7.0 的**本地 vendor 版本**，只修补构建配置，源码未改
+// （纯 Java，不依赖 Kotlin）。
+//
+// 修补原因：上游 android/build.gradle 自带
+//     buildscript { dependencies { classpath 'com.android.tools.build:gradle:8.1.0' } }
+// 与本项目的 AGP 9.1 冲突，构建直接失败并报
+//     "'kotlin-android' plugin requires one of the Android Gradle plugins.
+//      Please apply one of the following plugins to ':open_filex' project: ..."
+// 这里移除自带 AGP（统一用项目的），并同步 AGP 9 的 DSL 变更
+// （`compileSdkVersion`→`compileSdk`、`lintOptions`→`lint`、
+//  `minSdkVersion`→`minSdk`，且 AGP 9 要求 minSdk ≥ 21）。
+
+rootProject.allprojects {
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+
+apply plugin: 'com.android.library'
+
+android {
+    namespace "com.crazecoder.openfile"
+    compileSdk 35
+
+    defaultConfig {
+        minSdk 21
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+    }
+    lint {
+        disable 'InvalidPackage'
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
+
+dependencies {
+    implementation 'androidx.appcompat:appcompat:1.6.1'
+}

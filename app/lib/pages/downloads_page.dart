@@ -3,7 +3,7 @@ import 'dart:io' show File;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:url_launcher/url_launcher.dart';
+import 'package:open_filex/open_filex.dart';
 import '../providers/downloads.dart';
 import '../widgets/download_confirm.dart';
 
@@ -430,18 +430,18 @@ class _TaskCard extends ConsumerWidget {
   }
 }
 
-/// 打开已下载的文件。
+/// 用系统应用打开已下载的文件。
 ///
-/// 现状说明：**没有引入 file-opener 插件** —— 试过 `open_filex`，但它的
-/// `android/build.gradle` 固定了 AGP 8.1.0，与项目的 AGP 9.1 冲突，
-/// 构建直接失败（"'kotlin-android' plugin requires one of the Android
-/// Gradle plugins"），只能回退。
+/// 按扩展名推断 MIME，交给 `open_filex` 唤起对应程序：
+/// 音频 → 系统音乐播放器、epub/pdf/txt → 阅读器、视频 → 播放器。
 ///
-/// 因此这里用 `url_launcher` 尝试打开 `file://`；系统有能处理该 MIME 的
-/// 应用时会正常唤起（音频→音乐播放器、epub/pdf→阅读器）。若打不开
-/// （Android 7+ 对直接暴露 file:// 有 FileUriExposedException 限制，
-/// 或文件在应用私有目录），则**自动退回复制路径**并给出可操作提示，
-/// 不让用户点了没反应。
+/// 用的是**本地 vendor 版** open_filex（`packages/open_filex_local`）：
+/// 上游 4.7.0 的 android/build.gradle 自带 AGP 8.1.0 与项目 AGP 9.1 冲突，
+/// vendor 版只改了构建配置，源码未动。
+///
+/// **重要限制**：当「下载保存位置」是 `app`（应用私有目录）时，文件位于
+/// `Android/data/<包名>/files/`，**外部应用无权读取**，打开会失败。
+/// 这种情况必须明确告诉用户怎么解决，而不是只说"打开失败"。
 Future<void> openDownloadedFile(BuildContext context, String? path) async {
   final messenger = ScaffoldMessenger.of(context);
   if (path == null || path.isEmpty) {
@@ -453,22 +453,46 @@ Future<void> openDownloadedFile(BuildContext context, String? path) async {
         const SnackBar(content: Text('文件不存在（可能已被移动或删除）')));
     return;
   }
-
-  var opened = false;
   try {
-    final uri = Uri.file(path);
-    opened =
-        await canLaunchUrl(uri) && await launchUrl(uri, mode: LaunchMode.externalApplication);
-  } catch (_) {
-    opened = false;
+    final res = await OpenFilex.open(path, type: _mimeOf(path));
+    if (res.type == ResultType.done) return;
+    messenger.showSnackBar(SnackBar(
+      content: Text('无法打开：${res.message}\n'
+          '若文件在应用私有目录，请到「设置 → 下载保存位置」改为「系统下载」后重新下载'),
+      duration: const Duration(seconds: 6),
+    ));
+  } catch (e) {
+    messenger.showSnackBar(SnackBar(content: Text('打开失败：$e')));
   }
-  if (opened) return;
+}
 
-  // 退路：复制路径，用户可在文件管理器里打开
-  await Clipboard.setData(ClipboardData(text: path));
-  messenger.showSnackBar(const SnackBar(
-    content: Text('系统没有可直接打开该文件的程序，已复制路径。\n'
-        '提示：若文件在应用私有目录，请到「设置 → 下载保存位置」改为「系统下载」'),
-    duration: Duration(seconds: 6),
-  ));
+/// 按扩展名推断 MIME；未知类型交给系统自行选择
+String _mimeOf(String path) {
+  final dot = path.lastIndexOf('.');
+  final ext = dot < 0 ? '' : path.substring(dot + 1).toLowerCase();
+  switch (ext) {
+    case 'mp3':
+      return 'audio/mpeg';
+    case 'm4a':
+    case 'aac':
+      return 'audio/mp4';
+    case 'flac':
+      return 'audio/flac';
+    case 'wav':
+      return 'audio/wav';
+    case 'ogg':
+      return 'audio/ogg';
+    case 'mp4':
+      return 'video/mp4';
+    case 'mkv':
+      return 'video/x-matroska';
+    case 'epub':
+      return 'application/epub+zip';
+    case 'pdf':
+      return 'application/pdf';
+    case 'txt':
+      return 'text/plain';
+    default:
+      return '*/*';
+  }
 }
