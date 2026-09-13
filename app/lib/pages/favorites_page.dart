@@ -6,6 +6,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../providers/data_providers.dart';
 import '../providers/dht_providers.dart';
 import '../providers/engine_providers.dart';
+import 'book_detail_page.dart';
 
 class FavoritesPage extends ConsumerStatefulWidget {
   const FavoritesPage({super.key});
@@ -22,6 +23,9 @@ class _FavoritesPageState extends ConsumerState<FavoritesPage> {
   int _checked = 0;
   int _total = 0;
   bool _canceled = false;
+
+  /// 类型筛选（存 SourceType.name；null = 全部）
+  String? _filterType;
 
   Future<void> _checkAll() async {
     if (_checking) return;
@@ -138,7 +142,11 @@ class _FavoritesPageState extends ConsumerState<FavoritesPage> {
                   if (snapshot.connectionState == ConnectionState.waiting) {
                     return const Center(child: CircularProgressIndicator());
                   }
-                  final items = snapshot.data ?? [];
+                  final all = snapshot.data ?? [];
+                  // 类型筛选：收藏此前完全没有分类，音乐/小说/磁力混在一个列表里
+                  final items = _filterType == null
+                      ? all
+                      : all.where((f) => f.type == _filterType).toList();
                 if (items.isEmpty) {
                   return Center(
                     child: Column(
@@ -167,11 +175,14 @@ class _FavoritesPageState extends ConsumerState<FavoritesPage> {
                           radius: 17,
                           backgroundColor: f.isDead
                               ? scheme.errorContainer
-                              : scheme.primary.withValues(alpha: 0.12),
+                              : _typeColor(scheme, f.type)
+                                  .withValues(alpha: 0.14),
                           child: Icon(
-                            Icons.cloud_outlined,
+                            _typeIcon(f.type),
                             size: 18,
-                            color: f.isDead ? scheme.error : scheme.primary,
+                            color: f.isDead
+                                ? scheme.error
+                                : _typeColor(scheme, f.type),
                           ),
                         ),
                         title: Text(f.title,
@@ -214,17 +225,7 @@ class _FavoritesPageState extends ConsumerState<FavoritesPage> {
                             ),
                           ],
                         ),
-                        onTap: () async {
-                          final uri = Uri.parse(f.url);
-                          if (await canLaunchUrl(uri)) {
-                            await launchUrl(uri,
-                                mode: LaunchMode.externalApplication);
-                          } else if (context.mounted) {
-                            // 原实现静默失败，用户点了完全没反应
-                            ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(content: Text('无法打开该链接')));
-                          }
-                        },
+                        onTap: () => _onTapFavorite(f),
                       ),
                     );
                   },
@@ -236,4 +237,108 @@ class _FavoritesPageState extends ConsumerState<FavoritesPage> {
       ),
     );
   }
-}
+
+  // ── 类型识别与点击分发 ──────────────────────────────────────────
+
+  /// 收藏记录的 type 存的是 SourceType.name 字符串
+  SourceType _typeOf(Favorite f) => SourceType.values.firstWhere(
+        (t) => t.name == f.type,
+        // 老数据可能没有 type：按 url 协议兜底推断，不要再一律当网盘
+        orElse: () {
+          final u = f.url;
+          if (u.startsWith('magnet:')) return SourceType.magnet;
+          if (u.startsWith('ed2k:')) return SourceType.ed2k;
+          return SourceType.pan;
+        },
+      );
+
+  IconData _typeIcon(String type) {
+    switch (type) {
+      case 'novel':
+        return Icons.auto_stories;
+      case 'book':
+        return Icons.menu_book;
+      case 'comic':
+        return Icons.collections_bookmark;
+      case 'video':
+        return Icons.movie;
+      case 'music':
+        return Icons.music_note;
+      case 'audiobook':
+        return Icons.podcasts;
+      case 'magnet':
+        return Icons.attractions;
+      case 'ed2k':
+        return Icons.alternate_email;
+      case 'pan':
+      default:
+        return Icons.cloud_outlined;
+    }
+  }
+
+  Color _typeColor(ColorScheme scheme, String type) {
+    switch (type) {
+      case 'novel':
+        return Color.lerp(scheme.tertiary, scheme.secondary, 0.5)!;
+      case 'book':
+        return Color.lerp(scheme.tertiary, scheme.primary, 0.45)!;
+      case 'comic':
+        return Color.lerp(scheme.error, scheme.secondary, 0.35)!;
+      case 'video':
+        return Color.lerp(scheme.error, scheme.primary, 0.25)!;
+      case 'music':
+        return scheme.primary;
+      case 'audiobook':
+        return Color.lerp(scheme.secondary, scheme.tertiary, 0.4)!;
+      case 'magnet':
+      case 'ed2k':
+        return Color.lerp(scheme.error, scheme.tertiary, 0.35)!;
+      case 'pan':
+      default:
+        return scheme.tertiary;
+    }
+  }
+
+  /// 点击收藏项：**按类型分发**，不再一律 `launchUrl` 跳浏览器。
+  ///
+  /// 原实现对所有条目都外部打开：小说/书籍跳到浏览器看网页、音乐跳到浏览器
+  /// 播放（而非应用内播放），磁力等非 http 协议还会静默失败。
+  Future<void> _onTapFavorite(Favorite f) async {
+    final type = _typeOf(f);
+    final messenger = ScaffoldMessenger.of(context);
+    switch (type) {
+      case SourceType.novel:
+      case SourceType.book:
+      case SourceType.comic:
+      case SourceType.video:
+        // 进详情页：小说可在线阅读，电子书看元信息/下载
+        if (!mounted) return;
+        await Navigator.of(context).push(MaterialPageRoute(
+          builder: (_) => BookDetailPage(
+            result: SearchResult(
+              sourceId: f.sourceId,
+              sourceName: f.sourceName,
+              type: type,
+              title: f.title,
+              url: f.url,
+              extractCode: f.extractCode,
+            ),
+          ),
+        ));
+      case SourceType.magnet:
+      case SourceType.ed2k:
+      case SourceType.pan:
+      case SourceType.music:
+      case SourceType.audiobook:
+      case SourceType.game:
+        // 这几类先给"复制链接"：磁力/电驴/网盘的打开方式本来就是复制到下载器；
+        // 音乐收藏目前只有直链、缺少播放队列上下文，直接播放会在下一轮接入。
+        await Clipboard.setData(ClipboardData(
+          text: f.extractCode != null
+              ? '${f.url} 提取码: ${f.extractCode}'
+              : f.url,
+        ));
+        messenger.showSnackBar(
+            const SnackBar(content: Text('已复制链接，可粘贴到对应应用打开')));
+    }
+  }
