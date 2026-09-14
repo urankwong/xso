@@ -8,7 +8,8 @@ final lyricProvider = Provider<LyricService>((ref) => LyricService(Dio()));
 class LyricLine {
   final Duration? time;
   final String text;
-  const LyricLine(this.time, this.text);
+  final String? translation;
+  const LyricLine(this.time, this.text, {this.translation});
 }
 
 class LyricService {
@@ -116,9 +117,10 @@ class LyricService {
     _hintCover(query, null, first['cover'], first['coverPath']);
     final synced = first['syncedLyrics'] as String?;
     final plain = first['plainLyrics'] as String?;
+    final translated = first['translatedLyrics'] as String?;
     final raw = (synced != null && synced.isNotEmpty) ? synced : plain;
     if (raw == null || raw.isEmpty) throw StateError('未找到歌词');
-    return _parse(raw);
+    return _parseWithTranslation(raw, translated);
   }
 
   Future<List<LyricLine>> _get(
@@ -139,9 +141,10 @@ class LyricService {
     _hintCover(title, artist, resp.data?['cover'], resp.data?['coverPath']);
     final synced = resp.data?['syncedLyrics'] as String?;
     final plain = resp.data?['plainLyrics'] as String?;
+    final translated = resp.data?['translatedLyrics'] as String?;
     final raw = (synced != null && synced.isNotEmpty) ? synced : plain;
     if (raw == null || raw.isEmpty) throw StateError('未找到歌词');
-    return _parse(raw);
+    return _parseWithTranslation(raw, translated);
   }
 
   /// 对外暴露的 LRC 解析（歌曲信息页展示内嵌歌词用）
@@ -213,6 +216,49 @@ class LyricService {
     }
     if (lines.isEmpty) throw StateError('歌词为空');
     return lines;
+  }
+
+  /// 解析原文歌词并按时间轴对齐翻译歌词（如有）。
+  /// 翻译歌词同为 LRC 格式，按时间戳精确匹配或取 1 秒内最近行对齐。
+  List<LyricLine> _parseWithTranslation(String raw, String? translationRaw) {
+    final original = _parse(raw);
+    if (translationRaw == null || translationRaw.trim().isEmpty) {
+      return original;
+    }
+    final translations = <Duration, String>{};
+    final timeRe = RegExp(r'\[(\d+):(\d+(?:\.\d+)?)\]\s*(.*)$');
+    for (final line in translationRaw.split('\n')) {
+      final m = timeRe.firstMatch(line.trim());
+      if (m != null) {
+        final t = Duration(
+            minutes: int.parse(m.group(1)!),
+            milliseconds: ((double.parse(m.group(2)!)) * 1000).round());
+        final text = (m.group(3) ?? '').trim();
+        if (text.isNotEmpty) translations[t] = text;
+      }
+    }
+    if (translations.isEmpty) return original;
+    return original.map((line) {
+      if (line.time == null) return line;
+      if (translations.containsKey(line.time)) {
+        return LyricLine(line.time, line.text,
+            translation: translations[line.time]);
+      }
+      Duration? closest;
+      var minDiff = const Duration(seconds: 1);
+      for (final t in translations.keys) {
+        final diff = (t - line.time!).abs();
+        if (diff < minDiff) {
+          minDiff = diff;
+          closest = t;
+        }
+      }
+      if (closest != null) {
+        return LyricLine(line.time, line.text,
+            translation: translations[closest]);
+      }
+      return line;
+    }).toList();
   }
 
   /// 封面字节：走 dio（带 UA），结果按 url 缓存避免重复拉取

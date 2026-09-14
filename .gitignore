@@ -53,3 +53,4 @@ app/assets/sources/
 .codegraph/
 ci_run.json
 head.bin
+nul

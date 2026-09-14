@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' show pi;
 
 import 'dart:typed_data' show Uint8List;
 import 'dart:ui' show ImageFilter;
@@ -8,6 +9,7 @@ import 'package:data/data.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../providers/data_providers.dart';
 import '../providers/downloads.dart';
@@ -29,7 +31,7 @@ String _speedLabel(double v) =>
 
 const _speeds = [0.75, 1.0, 1.25, 1.5, 2.0];
 
-const _lyricLineHeight = 44.0;
+const _lyricLineHeight = 52.0;
 
 /// 全屏正在播放页（深色沉浸式）：封面/歌词双页 + 队列 + 播放模式 + 音质/倍速
 class NowPlayingPage extends ConsumerStatefulWidget {
@@ -43,6 +45,16 @@ class _NowPlayingPageState extends ConsumerState<NowPlayingPage> {
   final PageController _pageController = PageController();
   final ScrollController _lyricScroll = ScrollController();
   double? _dragValue;
+  bool _vinylEffect = false;
+
+  @override
+  void initState() {
+    super.initState();
+    SharedPreferences.getInstance().then((p) {
+      _vinylEffect = p.getBool('vinylEffect') ?? false;
+      if (mounted) setState(() {});
+    });
+  }
 
   @override
   void dispose() {
@@ -87,7 +99,10 @@ class _NowPlayingPageState extends ConsumerState<NowPlayingPage> {
                       child: PageView(
                         controller: _pageController,
                         children: [
-                          _CoverPage(tk: tk, onTap: () => _flipPage(1)),
+                          _CoverPage(
+                              tk: tk,
+                              onTap: () => _flipPage(1),
+                              vinyl: _vinylEffect),
                           _LyricPage(
                             tk: tk,
                             scrollController: _lyricScroll,
@@ -424,6 +439,15 @@ class _TopBar extends StatelessWidget {
   final VoidCallback onShare;
   const _TopBar({required this.tk, required this.onShare});
 
+  /// 艺人 · 专辑 拼接（专辑为空时只显示艺人）
+  static String _artistAlbumText(TrackInfo tk) {
+    final album = tk.extra?['album'];
+    if (album != null && album.isNotEmpty) {
+      return tk.artist.isEmpty ? album : '${tk.artist} · $album';
+    }
+    return tk.artist;
+  }
+
   @override
   Widget build(BuildContext context) {
     final source = tk.sourceName;
@@ -451,7 +475,7 @@ class _TopBar extends StatelessWidget {
                 children: [
                   Flexible(
                     child: Text(
-                      tk.artist,
+                      _artistAlbumText(tk),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
@@ -493,7 +517,9 @@ class _TopBar extends StatelessWidget {
 class _CoverPage extends ConsumerStatefulWidget {
   final TrackInfo tk;
   final VoidCallback onTap;
-  const _CoverPage({required this.tk, required this.onTap});
+  final bool vinyl;
+  const _CoverPage(
+      {required this.tk, required this.onTap, this.vinyl = false});
 
   @override
   ConsumerState<_CoverPage> createState() => _CoverPageState();
@@ -531,6 +557,9 @@ class _CoverPageState extends ConsumerState<_CoverPage> {
 
   @override
   Widget build(BuildContext context) {
+    if (widget.vinyl) {
+      return _VinylCover(tk: widget.tk, onTap: widget.onTap);
+    }
     final size = MediaQuery.of(context).size.shortestSide - 64.0;
     return RepaintBoundary(
       child: GestureDetector(
@@ -570,6 +599,183 @@ class _CoverPageState extends ConsumerState<_CoverPage> {
         color: Colors.white.withValues(alpha: 0.08),
         child: Icon(Icons.music_note,
             size: 72, color: Colors.white.withValues(alpha: 0.4)),
+      );
+}
+
+/// 黑胶唱片旋转封面：播放时匀速旋转，暂停时停止（保留当前角度）。
+/// 封面圆形裁剪居中，外圈暗色底盘 + 纹理环 + 中心圆点。
+/// 旋转由 AnimationController 驱动，仅监听 playing 状态变化启停，
+/// 不受 progress 200ms 心跳影响。
+class _VinylCover extends ConsumerStatefulWidget {
+  final TrackInfo tk;
+  final VoidCallback onTap;
+  const _VinylCover({required this.tk, required this.onTap});
+
+  @override
+  ConsumerState<_VinylCover> createState() => _VinylCoverState();
+}
+
+class _VinylCoverState extends ConsumerState<_VinylCover>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _controller;
+  Future<Uint8List?>? _future;
+  String _key = '';
+  bool _wasPlaying = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 8),
+    );
+    _syncFuture();
+    final player = ref.read(playerProvider);
+    player.progress.addListener(_onProgressChanged);
+    _onProgressChanged();
+  }
+
+  @override
+  void didUpdateWidget(covariant _VinylCover oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    _syncFuture();
+  }
+
+  void _syncFuture() {
+    final tk = widget.tk;
+    final key = '${tk.cacheKey}|${tk.cover}';
+    if (key == _key && _future != null) return;
+    _key = key;
+    _future = ref.read(metadataProvider).coverBytes(
+        sourceCover: tk.cover,
+        title: tk.title,
+        artist: tk.artist,
+        album: tk.extra?['album']);
+  }
+
+  /// 仅在 playing 状态真正变化时启停旋转，心跳频繁但不产生开销
+  void _onProgressChanged() {
+    final pg = ref.read(playerProvider).progress.value;
+    final isPlaying = pg.playing && !pg.failed;
+    if (isPlaying == _wasPlaying) return;
+    _wasPlaying = isPlaying;
+    if (isPlaying) {
+      _controller.repeat();
+    } else {
+      _controller.stop();
+    }
+  }
+
+  @override
+  void dispose() {
+    ref.read(playerProvider).progress.removeListener(_onProgressChanged);
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final size = MediaQuery.of(context).size.shortestSide - 64.0;
+    return RepaintBoundary(
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: widget.onTap,
+        child: Center(
+          child: AnimatedBuilder(
+            animation: _controller,
+            builder: (context, child) => Transform.rotate(
+              angle: _controller.value * 2 * pi,
+              child: child,
+            ),
+            child: _buildVinyl(size),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildVinyl(double size) {
+    return SizedBox(
+      width: size,
+      height: size,
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          Container(
+            width: size,
+            height: size,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: const Color(0xFF1A1A1A),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.5),
+                  blurRadius: 20,
+                  offset: const Offset(0, 8),
+                ),
+              ],
+            ),
+          ),
+          for (final r in const [0.62, 0.68, 0.74, 0.8, 0.86, 0.92])
+            Container(
+              width: size * r,
+              height: size * r,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                border: Border.all(
+                  color: Colors.white.withValues(alpha: 0.04),
+                  width: 0.5,
+                ),
+              ),
+            ),
+          ClipOval(
+            child: SizedBox(
+              width: size * 0.55,
+              height: size * 0.55,
+              child: FutureBuilder<Uint8List?>(
+                future: _future,
+                builder: (context, snap) {
+                  if (snap.connectionState != ConnectionState.done) {
+                    return const Center(
+                        child: CircularProgressIndicator(strokeWidth: 2));
+                  }
+                  final bytes = snap.data;
+                  if (snap.hasError || bytes == null || bytes.isEmpty) {
+                    return _placeholder(context);
+                  }
+                  return Image.memory(bytes,
+                      fit: BoxFit.cover,
+                      gaplessPlayback: true,
+                      errorBuilder: (_, __, ___) => _placeholder(context));
+                },
+              ),
+            ),
+          ),
+          Container(
+            width: size * 0.08,
+            height: size * 0.08,
+            decoration: const BoxDecoration(
+              shape: BoxShape.circle,
+              color: Color(0xFF333333),
+            ),
+          ),
+          Container(
+            width: size * 0.025,
+            height: size * 0.025,
+            decoration: const BoxDecoration(
+              shape: BoxShape.circle,
+              color: Color(0xFF666666),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _placeholder(BuildContext context) => Container(
+        color: Colors.white.withValues(alpha: 0.08),
+        child: Icon(Icons.music_note,
+            size: 48, color: Colors.white.withValues(alpha: 0.4)),
       );
 }
 
@@ -697,17 +903,40 @@ class _LyricPageState extends ConsumerState<_LyricPage> {
         }
         final lines = snap.data!;
         final hasTimes = lines.any((l) => l.time != null);
-        // 只有歌词 ListView（含当前行高亮）订阅高频进度
+        // 纯文本歌词（无时间轴）：居中静态展示，不滚动
+        if (!hasTimes) {
+          return SingleChildScrollView(
+            child: Padding(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 32, vertical: 60),
+              child: Column(
+                children: [
+                  for (final line in lines)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 10),
+                      child: Text(
+                        line.text,
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          fontSize: 15,
+                          color: Colors.white.withValues(alpha: 0.7),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          );
+        }
+        // 带时间轴歌词：滚动跟随 + 当前行高亮 + 距离衰减透明度
         final player = ref.read(playerProvider);
         return ValueListenableBuilder<ProgressInfo>(
           valueListenable: player.progress,
           builder: (context, pg, _) {
             var activeIdx = -1;
-            if (hasTimes) {
-              for (var i = 0; i < lines.length; i++) {
-                final t = lines[i].time;
-                if (t != null && t <= pg.position) activeIdx = i;
-              }
+            for (var i = 0; i < lines.length; i++) {
+              final t = lines[i].time;
+              if (t != null && t <= pg.position) activeIdx = i;
             }
             if (activeIdx != _activeIdx) {
               _activeIdx = activeIdx;
@@ -715,7 +944,6 @@ class _LyricPageState extends ConsumerState<_LyricPage> {
             }
             return NotificationListener<ScrollNotification>(
               onNotification: (n) {
-                // 只有用户主动拖动才暂停跟随，程序自动滚动不触发
                 if (n is ScrollStartNotification && n.dragDetails != null) {
                   _pauseFollow();
                 }
@@ -729,20 +957,58 @@ class _LyricPageState extends ConsumerState<_LyricPage> {
                 itemExtent: _lyricLineHeight,
                 itemBuilder: (context, i) {
                   final active = i == activeIdx;
-                  return Center(
-                    child: Text(
-                      lines[i].text,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        fontSize: active ? 17 : 14.5,
-                        fontWeight: active ? FontWeight.bold : FontWeight.normal,
-                        // 页面背景恒为深色，不能跟随主题 primary：
-                        // 浅色主题的 primary 是深 teal，在近黑背景上对比度不足
-                        color: active
-                            ? const Color(0xFF2BD4B4)
-                            : Colors.white.withValues(alpha: 0.6),
+                  final distance = (i - activeIdx).abs();
+                  final opacity = active
+                      ? 1.0
+                      : switch (distance) {
+                          1 => 0.85,
+                          2 => 0.55,
+                          3 => 0.35,
+                          _ => 0.20,
+                        };
+                  final line = lines[i];
+                  return GestureDetector(
+                    behavior: HitTestBehavior.translucent,
+                    onTap: line.time != null
+                        ? () => ref.read(playerProvider).seek(line.time!)
+                        : null,
+                    child: Center(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            line.text,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              fontSize: active ? 17 : 14.5,
+                              fontWeight: active
+                                  ? FontWeight.bold
+                                  : FontWeight.normal,
+                              color: active
+                                  ? const Color(0xFF2BD4B4)
+                                  : Colors.white.withValues(alpha: opacity),
+                            ),
+                          ),
+                          if (active &&
+                              line.translation != null &&
+                              line.translation!.isNotEmpty)
+                            Padding(
+                              padding: const EdgeInsets.only(top: 2),
+                              child: Text(
+                                line.translation!,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color:
+                                      Colors.white.withValues(alpha: 0.5),
+                                ),
+                              ),
+                            ),
+                        ],
                       ),
                     ),
                   );

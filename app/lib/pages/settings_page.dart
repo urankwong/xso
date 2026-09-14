@@ -17,6 +17,7 @@ class _SettingsPageState extends State<SettingsPage> {
   final _ua = TextEditingController();
   String _saveLoc = 'app';
   bool _downloadConfirm = true;
+  bool _vinylEffect = false;
   UaMode _uaMode = UaPresets.defaultMode;
 
   @override
@@ -26,6 +27,7 @@ class _SettingsPageState extends State<SettingsPage> {
       _ua.text = p.getString('ua') ?? '';
       _saveLoc = p.getString('saveLocation') ?? 'app';
       _downloadConfirm = p.getBool('downloadConfirm') ?? true;
+      _vinylEffect = p.getBool('vinylEffect') ?? false;
       // 老数据兼容：只填过 ua、没存过 uaMode 时按「自定义」回显
       final mk = p.getString('uaMode');
       _uaMode = (mk == null || mk.isEmpty)
@@ -107,6 +109,20 @@ class _SettingsPageState extends State<SettingsPage> {
               setState(() => _downloadConfirm = v);
               final p = await SharedPreferences.getInstance();
               await p.setBool('downloadConfirm', v);
+            },
+          ),
+          const Divider(height: 1),
+          SwitchListTile(
+            value: _vinylEffect,
+            title: const Text('播放页黑胶唱片动效'),
+            subtitle: const Text(
+                '开启后播放页封面以黑胶唱片旋转动画展示（播放时旋转、暂停时停止）；'
+                '关闭则显示静态封面。',
+                style: TextStyle(fontSize: 12)),
+            onChanged: (v) async {
+              setState(() => _vinylEffect = v);
+              final p = await SharedPreferences.getInstance();
+              await p.setBool('vinylEffect', v);
             },
           ),
           const Divider(height: 1),
