@@ -35,6 +35,7 @@ xso 内置一个源引擎，可按不同协议加载源，也可自行编写 JSO
 - **收藏与历史**：按类型分类收藏 + 批量活性检测失效标红，搜索历史一键回搜
 - **局域网助手**：内置 LAN 服务，从浏览器批量粘贴/导入源
 - **账号态**：按源命名空间持久化 cookie / 用户变量，支持需登录的平台
+- **应用内更新**：从 GitHub Releases 检查新版本，App 内下载 APK 并唤起系统安装器；直连失败自动改用加速镜像，也可复制直链交给浏览器手动下载
 
 ## 结构
 
@@ -61,6 +62,17 @@ cd app && flutter pub get && flutter run
 ```
 
 三个纯 Dart package 使用 path 依赖，无需 melos bootstrap 也可直接构建。运行含 QuickJS 的测试时需保证 `quickjs_c_bridge.dll`（或对应平台的桥接库）在运行环境可加载。
+
+## 发布与更新
+
+推 `v*` tag 即由 GitHub Actions（`.github/workflows/build.yml`）构建 `app-debug.apk` 与分架构 release 包，并自动挂到该版本的 Releases 页面。
+
+App 侧的「设置 → 检查更新」读取 `releases/latest`，按 `版本号+构建号` 比较（如 `v0.1.0+6`）：
+
+- 启动时每天最多静默检查一次，可「跳过此版本」后不再提示
+- 按设备 ABI 自动选包（拿不到架构时默认 `arm64-v8a`），下载进度可视、可取消
+- 直连 GitHub 失败会自动依次尝试公共加速镜像前缀；仍失败时可复制直链交给浏览器下载
+- 未认证的 GitHub API 限流约 60 次/小时/IP，故静默检查有节流；安装需在系统弹窗中允许「安装未知应用」
 
 ## 测试
 

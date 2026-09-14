@@ -10,6 +10,10 @@
     <uses-permission android:name="android.permission.WAKE_LOCK"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"/>
+    <!-- 应用内更新：下载 APK 后拉起系统安装器。Android 8+ 未声明此权限时
+         安装 intent 会被系统静默拒绝（不报错、只是没反应）。用户仍需在系统
+         弹窗里允许「安装未知应用」，未授予时更新框退化为复制地址/浏览器下载。 -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"/>
     <application
         android:label="汇搜"
         android:name="${applicationName}"

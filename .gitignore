@@ -27,6 +27,7 @@ test_sources.py
 .workbuddy/
 .merkle-snapshot.json
 .tmp_ui.xml
+.kotlin/
 
 # 无关第三方独立仓库
 deepseek-harness-mobile/

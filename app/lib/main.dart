@@ -7,6 +7,7 @@ import 'pages/home_shell.dart';
 import 'providers/builtin_sources.dart';
 import 'providers/engine_providers.dart';
 import 'providers/plugin_store.dart';
+import 'widgets/update_dialog.dart';
 import 'theme.dart';
 
 /// 底部导航当前 tab：首页(0) / 搜索(1) / 下载(2) / 我的(3)
@@ -77,7 +78,7 @@ class MyApp extends ConsumerWidget {
       theme: AppTheme.light(),
       darkTheme: AppTheme.dark(),
       themeMode: ref.watch(themeModeProvider),
-      home: const HomeShell(),
+      home: const UpdateGate(child: HomeShell()),
     );
   }
 }

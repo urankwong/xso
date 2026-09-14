@@ -5,6 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../providers/player_providers.dart';
 import '../providers/downloads.dart';
 import '../providers/ua_provider.dart';
+import '../widgets/update_dialog.dart';
 
 class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key});
@@ -128,6 +129,9 @@ class _SettingsPageState extends State<SettingsPage> {
               );
             },
           ),
+          const Divider(height: 1),
+          const UpdateCheckTile(),
+          const Divider(height: 1),
           const ListTile(
             title: Text('关于'),
             subtitle: Text('汇搜 v0.1\n已内置音乐/网盘/磁力等源，可在源管理中停用或删除'),

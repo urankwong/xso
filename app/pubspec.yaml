@@ -1,7 +1,7 @@
 name: app
 description: 聚合搜索 App 壳
 publish_to: none
-version: 0.1.0+5
+version: 0.1.0+7
 environment:
   sdk: ^3.5.0
 dependencies:
@@ -38,6 +38,8 @@ dependencies:
   pointycastle: ^3.9.1
   asn1lib: ^1.5.3
   qr_flutter: ^4.1.0
+  package_info_plus: ^10.2.1
+  device_info_plus: ^13.2.0
 dev_dependencies:
   flutter_test:
     sdk: flutter
