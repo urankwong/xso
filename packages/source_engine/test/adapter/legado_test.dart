@@ -259,6 +259,44 @@ void main() {
     expect(src.toc!.url.attr, 'href');
   });
 
+  test('含 @js:/&& 的阅读规则生成 JS 钩子，静态字段仍走静态路径', () {
+    final src = LegadoAdapter().translate(jsonEncode({
+      'bookSourceUrl': 'https://book.example.com',
+      'bookSourceName': 'JS 阅读源',
+      'searchUrl': 'https://book.example.com/s?q={{key}}',
+      'ruleSearch': {
+        'bookList': '@css:div',
+        'name': '@css:h3@text',
+        'bookUrl': 'a@href',
+      },
+      'ruleBookInfo': {
+        // 含 && 管道 + @js: → 必须走钩子
+        'intro':
+            r'[property="og:a"]@content&&[property="og:b"]@content@js:"更新时间："+result',
+        'kind': '.kind@text', // 纯静态
+      },
+      'ruleToc': {
+        'chapterList': '#list@a',
+        'chapterName': 'text',
+        'chapterUrl': 'href',
+      },
+      'ruleContent': {'content': r'@js:result.replace(/广告/g,"")'},
+    }));
+    expect(src.bookHooks, isNotNull);
+    expect(src.bookHooks!.bookInfo, isNotNull); // intro 含 && 与 @js:
+    expect(src.bookHooks!.content, isNotNull); // 正文含 @js:
+    expect(src.bookHooks!.toc, isNull); // 目录全静态，不需要钩子
+    // 静态字段照常可用；JS 字段在静态侧为 null（由钩子负责）
+    expect(src.bookMeta!.kind, isNotNull);
+    expect(src.bookMeta!.intro, isNull);
+    expect(src.toc, isNotNull);
+    // 目录(静态) + 正文(钩子) 都具备 → 可阅读
+    expect(src.canRead, isTrue);
+    // 钩子里应包含管道拆分与 evalRule 调用
+    expect(src.bookHooks!.bookInfo, contains('evalRule'));
+    expect(src.bookHooks!.bookInfo, contains('splitChain'));
+  });
+
   test('stripTags 把正文 HTML 转成可读纯文本', () {
     final html = '<div><p>第一段</p><p>第二段</p>'
         '<br>换行&amp;实体&nbsp;结束</div>';

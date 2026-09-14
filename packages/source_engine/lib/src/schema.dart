@@ -24,8 +24,18 @@ class Source {
   /// 正文规则（Legado `ruleContent`）
   final ContentRule? content;
 
+  /// 阅读相关规则的 JS 钩子。
+  ///
+  /// 当详情/目录/正文规则里出现静态路径无法求值的语法
+  /// （`@js:`、`<js>`、`&&` 管道链）时，改用钩子把这些字段的求值
+  /// 交给 JS 运行时；一次 evaluate 返回整组字段，避免逐字段多次求值。
+  final BookHooks? bookHooks;
+
   /// 是否具备「在线阅读」能力：目录 + 正文都齐了才行
-  bool get canRead => toc != null && content != null;
+  /// （静态规则或 JS 钩子任一形式都可）
+  bool get canRead =>
+      (toc != null || (bookHooks?.toc != null)) &&
+      (content != null || (bookHooks?.content != null));
 
   const Source({
     required this.meta,
@@ -35,7 +45,25 @@ class Source {
     this.bookMeta,
     this.toc,
     this.content,
+    this.bookHooks,
   });
+}
+
+/// 阅读规则的 JS 钩子：脚本形如 `(function(body){ … })`，
+/// 返回 JSON 字符串（正文钩子返回纯文本）。
+class BookHooks {
+  /// 返回 JSON：`{coverUrl,intro,kind,lastChapter,wordCount}`
+  final String? bookInfo;
+
+  /// 返回 JSON：`[{title,url}]`
+  final String? toc;
+
+  /// 返回纯文本正文
+  final String? content;
+
+  const BookHooks({this.bookInfo, this.toc, this.content});
+
+  bool get isEmpty => bookInfo == null && toc == null && content == null;
 }
 
 /// 书籍详情元信息规则。字段全部可选：不同站点能提供的信息差异很大，

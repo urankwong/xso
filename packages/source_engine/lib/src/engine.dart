@@ -244,16 +244,37 @@ class SourceEngine {
       fetcher(url, headers: _headersOf(s)).timeout(searchTimeout);
 
   /// 书籍详情元信息（封面/简介/分类/最新章节）。
-  /// 源未声明 bookMeta 时返回空对象（不报错，详情页只展示标题与操作）。
+  /// 规则含 JS/`&&` 时走 JS 钩子，否则走静态 CSS 解析。
   Future<BookInfo> fetchBookInfo(Source source, String bookUrl) async {
+    final hook = source.bookHooks?.bookInfo;
     final rule = source.bookMeta;
-    if (rule == null) return const BookInfo();
+    if (hook == null && rule == null) return const BookInfo();
     try {
       final body = await _get(bookUrl, source);
       final base = _baseOf(source);
+      if (hook != null) {
+        final raw = await jsRuntime.evaluate(
+            '(function(body){ $hook })(${jsonEncode(body)})',
+            timeout: hookTimeout);
+        final m = jsonDecode(raw) as Map<String, dynamic>;
+        String? s(String k) {
+          final v = m[k];
+          if (v == null) return null;
+          final t = v.toString().trim();
+          return t.isEmpty ? null : t;
+        }
+
+        return BookInfo(
+          cover: _abs(s('coverUrl'), base),
+          intro: s('intro'),
+          kind: s('kind'),
+          lastChapter: s('lastChapter'),
+          wordCount: s('wordCount'),
+        );
+      }
       String? f(FieldRule? r) => r == null ? null : extractField(body, r);
       return BookInfo(
-        cover: _abs(f(rule.cover), base),
+        cover: _abs(f(rule!.cover), base),
         intro: f(rule.intro),
         kind: f(rule.kind),
         lastChapter: f(rule.lastChapter),
@@ -270,12 +291,29 @@ class SourceEngine {
   /// 少数站点用独立的目录页 —— 后者由源把 ruleToc 的链接写在详情页里，
   /// 当前实现先覆盖"同页"这一主流情况。
   Future<List<Chapter>> fetchChapters(Source source, String bookUrl) async {
+    final hook = source.bookHooks?.toc;
     final rule = source.toc;
-    if (rule == null) return const [];
+    if (hook == null && rule == null) return const [];
     try {
       final body = await _get(bookUrl, source);
       final base = _baseOf(source);
-      final items = selectAll(body, rule.list);
+      if (hook != null) {
+        final raw = await jsRuntime.evaluate(
+            '(function(body){ $hook })(${jsonEncode(body)})',
+            timeout: hookTimeout);
+        final list = jsonDecode(raw);
+        if (list is! List) return const [];
+        final out = <Chapter>[];
+        for (final e in list) {
+          if (e is! Map) continue;
+          final t = e['title']?.toString() ?? '';
+          final u = e['url']?.toString() ?? '';
+          if (u.isEmpty) continue;
+          out.add(Chapter(title: t, url: _abs(u, base) ?? u));
+        }
+        return out;
+      }
+      final items = selectAll(body, rule!.list);
       final out = <Chapter>[];
       for (final it in items) {
         final t = extractFieldIn(it, rule.name);
@@ -291,22 +329,31 @@ class SourceEngine {
     }
   }
 
-  /// 正文。带 nextUrl 的站点会串起分页（最多 10 页，防死循环）。
+  /// 正文。静态规则带 nextUrl 时串页；JS 钩子则单页返回（钩子内部可自行处理）。
   Future<String> fetchContent(Source source, String chapterUrl) async {
+    final hook = source.bookHooks?.content;
     final rule = source.content;
-    if (rule == null) return '';
+    if (hook == null && rule == null) return '';
     try {
+      final body = await _get(chapterUrl, source);
+      if (hook != null) {
+        final raw = await jsRuntime.evaluate(
+            '(function(body){ $hook })(${jsonEncode(body)})',
+            timeout: hookTimeout);
+        return stripTags(raw);
+      }
       final buf = StringBuffer();
       var url = chapterUrl;
+      var pageBody = body;
       for (var page = 0; page < 10 && url.isNotEmpty; page++) {
-        final body = await _get(url, source);
-        final raw = extractField(body, rule.content) ?? '';
+        final raw = extractField(pageBody, rule!.content) ?? '';
         buf.write(stripTags(raw));
         final nextRule = rule.nextUrl;
         if (nextRule == null) break;
-        final n = _abs(extractField(body, nextRule), _baseOf(source));
+        final n = _abs(extractField(pageBody, nextRule), _baseOf(source));
         if (n == null || n == url) break;
         url = n;
+        pageBody = await _get(url, source);
       }
       return buf.toString().trim();
     } on SourceExecutionException {

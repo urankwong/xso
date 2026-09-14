@@ -136,7 +136,88 @@ class LegadoAdapter {
       bookMeta: _buildBookMeta(raw['ruleBookInfo']),
       toc: _buildToc(null, raw['ruleToc']),
       content: _buildContent(raw['ruleContent']),
+      // 规则含 @js:/<js>/&& 时，静态路径取不到值 → 生成 JS 钩子，
+      // 由引擎把整组字段交给 JS 运行时求值（prelude 的 evalRule 已支持
+      // ##/||/&& 与 @js:，与搜索规则的语义完全一致）。
+      bookHooks: _buildBookHooks(raw, base, jsLib),
     );
+  }
+
+  /// 规则里是否有静态路径处理不了的语法
+  bool _needsJs(Iterable<dynamic> rules) {
+    for (final r in rules) {
+      if (r is! String) continue;
+      final s = r.trim();
+      if (s.isEmpty) continue;
+      if (_extractJs(s) != null) return true;
+      if (s.contains('&&')) return true;
+      if (s.contains('{{js')) return true;
+    }
+    return false;
+  }
+
+  /// 生成阅读相关字段的 JS 钩子（一次 evaluate 返回整组结果）
+  BookHooks? _buildBookHooks(
+      Map<String, dynamic> raw, String base, String jsLib) {
+    final info = _asRuleMap(raw['ruleBookInfo']);
+    final toc = _asRuleMap(raw['ruleToc']);
+    final ct = _asRuleMap(raw['ruleContent']);
+
+    String? infoHook;
+    if (info != null &&
+        _needsJs([
+          info['coverUrl'],
+          info['intro'],
+          info['kind'],
+          info['lastChapter'],
+          info['wordCount'],
+        ])) {
+      const keys = ['coverUrl', 'intro', 'kind', 'lastChapter', 'wordCount'];
+      final buf = StringBuffer('${_jsPrelude(base, jsLib: jsLib)}\n');
+      buf.writeln('var __r = {};');
+      for (final k in keys) {
+        final v = info[k];
+        if (v is! String || v.trim().isEmpty) continue;
+        buf.writeln('try { __r[${jsonEncode(k)}] = '
+            'evalRule(${jsonEncode(v.trim())}, body); } catch (e) {}');
+      }
+      buf.writeln('return JSON.stringify(__r);');
+      infoHook = buf.toString();
+    }
+
+    String? tocHook;
+    if (toc != null &&
+        _needsJs([toc['chapterList'], toc['chapterName'], toc['chapterUrl']])) {
+      final list = (toc['chapterList'] as String? ?? '').trim();
+      final name = (toc['chapterName'] as String? ?? '').trim();
+      final url = (toc['chapterUrl'] as String? ?? '').trim();
+      if (list.isNotEmpty && name.isNotEmpty && url.isNotEmpty) {
+        tocHook = '${_jsPrelude(base, jsLib: jsLib)}\n'
+            'var __items = evalList(${jsonEncode(list)}, body);\n'
+            'var __rows = [];\n'
+            'for (var i = 0; i < __items.length; i++) {\n'
+            '  var it = __items[i];\n'
+            '  var t = evalRule(${jsonEncode(name)}, it);\n'
+            '  var u = evalRule(${jsonEncode(url)}, it);\n'
+            '  if (!u) continue;\n'
+            '  __rows.push({ title: t || "", url: absUrl(u) });\n'
+            '}\n'
+            'return JSON.stringify(__rows);';
+      }
+    }
+
+    String? contentHook;
+    final cRule = (ct?['content'] as String? ?? '').trim();
+    if (cRule.isNotEmpty && _needsJs([cRule])) {
+      contentHook = '${_jsPrelude(base, jsLib: jsLib)}\n'
+          'return evalRule(${jsonEncode(cRule)}, body);';
+    }
+
+    if (infoHook == null && tocHook == null && contentHook == null) {
+      return null;
+    }
+    return BookHooks(
+        bookInfo: infoHook, toc: tocHook, content: contentHook);
   }
 
   /// Legado `ruleBookInfo` → 书籍详情元信息规则。
@@ -448,7 +529,38 @@ class LegadoAdapter {
           return (v == null ? '' : String(v));
         } catch (e) { return ''; }
       }
+      // `&&` 在 Legado 里是**管道**：前一段的结果作为后一段的 result 继续求值。
+      // 典型写法：
+      //   [property="og:novel:update_time"]@content&&[property="og:description"]@content@js:'更新时间：'+result
+      // 注意 `&&` 也可能是 @js: 内部的 JS 运算符（如 `a && a.trim()`），
+      // 所以只对 **@js: 之前** 的部分做拆分，@js: 及其后整体归到最后一段。
+      function splitChain(rule){
+        var jsAt = rule.indexOf('@js:');
+        var head = jsAt >= 0 ? rule.substring(0, jsAt) : rule;
+        var tail = jsAt >= 0 ? rule.substring(jsAt) : '';
+        var parts = [];
+        var segs = head.split('&&');
+        for (var i = 0; i < segs.length; i++) {
+          var s = segs[i].trim();
+          if (s) parts.push(s);
+        }
+        if (parts.length === 0) return [rule];
+        if (tail) parts[parts.length - 1] += tail;
+        return parts;
+      }
       function evalRule(rule, result){
+        var chain = splitChain(String(rule || ''));
+        if (chain.length > 1) {
+          var cur = result;
+          for (var ci = 0; ci < chain.length; ci++) {
+            cur = evalRuleSingle(chain[ci], cur);
+            if (cur == null || String(cur).length === 0) break;
+          }
+          return cur == null ? '' : String(cur);
+        }
+        return evalRuleSingle(chain[0], result);
+      }
+      function evalRuleSingle(rule, result){
         var r = String(rule || '');
         var rep = null, to = '';
         var hi = r.indexOf('##');
