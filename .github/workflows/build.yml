@@ -10,6 +10,15 @@ on:
 # 拉取用一把「只读凭据」：公钥已加到源内容仓(只读)，私钥存于本仓
 # CI 用该凭据通过 SSH 克隆源内容仓，权限最小。
 
+# 发布 Release 需要写权限。仓库默认的 workflow 权限往往是「只读仓库内容」，
+# 而该步骤平时被 if 跳过、纯 push 构建不会触发，所以权限缺失要等到第一次
+# 打 tag 才暴露（表现为本步 403 Resource not accessible by integration）。
+# 这里按最小必要显式声明：建 Release/传资产要 contents:write，
+# generate_release_notes 生成变更说明要读提交/PR。
+permissions:
+  contents: write
+  pull-requests: read
+
 jobs:
   build:
     runs-on: ubuntu-latest
