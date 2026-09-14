@@ -130,6 +130,37 @@ const _providerLabels = {
   'xunlei': '迅雷云盘',
 };
 
+/// 标题中匹配关键词高亮（不区分大小写），返回 TextSpan 供 RichText 使用
+TextSpan _highlightTitle(
+    String title, String keyword, TextStyle baseStyle, Color highlightColor) {
+  if (keyword.isEmpty || title.isEmpty) {
+    return TextSpan(text: title, style: baseStyle);
+  }
+  final lower = title.toLowerCase();
+  final kw = keyword.toLowerCase();
+  final spans = <TextSpan>[];
+  var start = 0;
+  while (true) {
+    final idx = lower.indexOf(kw, start);
+    if (idx < 0) {
+      if (start < title.length) {
+        spans.add(TextSpan(text: title.substring(start), style: baseStyle));
+      }
+      break;
+    }
+    if (idx > start) {
+      spans.add(TextSpan(text: title.substring(start, idx), style: baseStyle));
+    }
+    spans.add(TextSpan(
+      text: title.substring(idx, idx + kw.length),
+      style: baseStyle.copyWith(
+          color: highlightColor, fontWeight: FontWeight.bold),
+    ));
+    start = idx + kw.length;
+  }
+  return TextSpan(children: spans);
+}
+
 /// 类型徽章色：全部由 ColorScheme 派生（primary/error/tertiary 调和），不硬编码外部色值
 Color _typeColor(ColorScheme scheme, SourceType type) => switch (type) {
       SourceType.music => scheme.primary,
@@ -232,23 +263,26 @@ class _SearchPageState extends ConsumerState<SearchPage> {
     return Scaffold(
       appBar: AppBar(
         titleSpacing: 12,
-        title: TextField(
-          controller: _controller,
-          textInputAction: TextInputAction.search,
-          decoration: InputDecoration(
-            hintText: '搜索磁力 / 网盘 / 音乐…',
-            prefixIcon: const Icon(Icons.search),
-            suffixIcon: _hasText
-                ? IconButton(
-                    icon: const Icon(Icons.clear, size: 20),
-                    tooltip: '清空',
-                    onPressed: () {
-                      _controller.clear();
-                    },
-                  )
-                : null,
+        title: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 600),
+          child: TextField(
+            controller: _controller,
+            textInputAction: TextInputAction.search,
+            decoration: InputDecoration(
+              hintText: '搜索磁力 / 网盘 / 音乐…',
+              prefixIcon: const Icon(Icons.search),
+              suffixIcon: _hasText
+                  ? IconButton(
+                      icon: const Icon(Icons.clear, size: 20),
+                      tooltip: '清空',
+                      onPressed: () {
+                        _controller.clear();
+                      },
+                    )
+                  : null,
+            ),
+            onSubmitted: (_) => _submit(),
           ),
-          onSubmitted: (_) => _submit(),
         ),
         actions: [
           Padding(
@@ -361,8 +395,8 @@ class _TypeChips extends ConsumerWidget {
   }
 }
 
-/// 结果视图：统计行 + 来源健康条 + 聚合混排信息流
-class _ResultsView extends ConsumerWidget {
+/// 结果视图：统计行 + 二次检索 + 来源健康条 + 聚合混排信息流
+class _ResultsView extends ConsumerStatefulWidget {
   final SearchSession session;
   final VoidCallback onRetry;
   final VoidCallback onGoSources;
@@ -372,15 +406,32 @@ class _ResultsView extends ConsumerWidget {
     required this.onGoSources,
   });
 
-  /// 各源结果按轮次交错排列。
+  @override
+  ConsumerState<_ResultsView> createState() => _ResultsViewState();
+}
+
+class _ResultsViewState extends ConsumerState<_ResultsView> {
+  static const _pageSize = 50;
+  int _visibleCount = _pageSize;
+  String _lastKeyword = '';
+
+  @override
+  void didUpdateWidget(covariant _ResultsView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.session.keyword != _lastKeyword) {
+      _lastKeyword = widget.session.keyword;
+      _visibleCount = _pageSize;
+    }
+  }
+
+  /// 各源结果按轮次交错排列 + 按标题去重。
   ///
   /// 原实现是「源 A 的全部 → 源 B 的全部」，谁先返回谁占满首屏：
   /// 实测搜 adele 时前 7 条全来自同一个源，用户看不到其他源的结果，
   /// 也感受不到「多源聚合」的价值。交错后每屏都能看到多个来源。
   List<SearchResult> _flat(String? sourceFilter) {
     final groups = <List<SearchResult>>[];
-    session.resultsBySource.forEach((id, results) {
-      // 来源筛选：只保留被选中的那个源
+    widget.session.resultsBySource.forEach((id, results) {
       if (sourceFilter != null && id != sourceFilter) return;
       groups.add(List<SearchResult>.of(results));
     });
@@ -397,109 +448,188 @@ class _ResultsView extends ConsumerWidget {
       }
       round++;
     }
-    return out;
+    // 去重：按标题（不区分大小写）保留首次出现
+    final seen = <String>{};
+    return out.where((r) {
+      final key = r.title.trim().toLowerCase();
+      if (key.isEmpty || seen.contains(key)) return false;
+      seen.add(key);
+      return true;
+    }).toList();
   }
 
   /// 来源展示名：优先用结果里带的 sourceName，查不到再退回源 id
   String _sourceNameOf(String id) {
-    final first = session.resultsBySource[id]?.firstOrNull;
+    final first = widget.session.resultsBySource[id]?.firstOrNull;
     if (first != null && first.sourceName.isNotEmpty) return first.sourceName;
     return id;
   }
 
+  /// 解析 extra 中的日期为 YYYYMMDD 可比较字符串
+  String _dateOf(SearchResult r) {
+    final raw = r.extra?['date'] ?? '';
+    if (raw.isEmpty) return '';
+    final m = RegExp(r'(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})').firstMatch(raw);
+    if (m != null) {
+      return '${m.group(1)!}${m.group(2)!.padLeft(2, '0')}${m.group(3)!.padLeft(2, '0')}';
+    }
+    return raw;
+  }
+
+  /// 解析 extra 中的大小为字节数
+  int _sizeOf(SearchResult r) {
+    final raw = r.extra?['size'] ?? '';
+    if (raw.isEmpty) return 0;
+    final m = RegExp(r'([\d.]+)\s*([KMGT]?B)', caseSensitive: false)
+        .firstMatch(raw);
+    if (m != null) {
+      final v = double.tryParse(m.group(1)!) ?? 0;
+      final unit = m.group(2)!.toUpperCase();
+      return (v * switch (unit) {
+            'KB' => 1024,
+            'MB' => 1024 * 1024,
+            'GB' => 1024 * 1024 * 1024,
+            'TB' => 1024 * 1024 * 1024 * 1024,
+            _ => 1,
+          }).round();
+    }
+    return 0;
+  }
+
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  Widget build(BuildContext context) {
     final filter = ref.watch(searchTypeFilterProvider);
     final sortMode = ref.watch(searchSortModeProvider);
     final sourceFilter = ref.watch(searchSourceFilterProvider);
-    final all = _flat(sourceFilter);
+    final inResult = ref.watch(searchInResultProvider);
+    final scheme = Theme.of(context).colorScheme;
+
+    var all = _flat(sourceFilter);
     List<SearchResult> flat =
         filter == null ? all : all.where((r) => r.type == filter).toList();
+
+    // 二次检索：前端过滤
+    if (inResult.isNotEmpty) {
+      final kw = inResult.toLowerCase();
+      flat = flat.where((r) => r.title.toLowerCase().contains(kw)).toList();
+    }
+
+    // 排序
     if (sortMode == SearchSortMode.type) {
       flat = [...flat]..sort((a, b) => a.type.name.compareTo(b.type.name));
+    } else if (sortMode == SearchSortMode.time) {
+      flat = [...flat]..sort((a, b) => _dateOf(b).compareTo(_dateOf(a)));
+    } else if (sortMode == SearchSortMode.size) {
+      flat = [...flat]..sort((a, b) => _sizeOf(b).compareTo(_sizeOf(a)));
     }
-    final done = session.statusBySource.values
+
+    final done = widget.session.statusBySource.values
         .where((s) => s == SourceStatus.done)
         .length;
+    final running = widget.session.statusBySource.values
+        .where((s) => s == SourceStatus.running)
+        .length;
+
+    final visible = flat.take(_visibleCount).toList();
+    final hasMore = flat.length > _visibleCount;
 
     return Column(
       children: [
-        // 统计行：N 个来源 · M 条结果 + 排序方式
+        // 统计行 + 排序
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 2, 16, 2),
           child: Row(
             children: [
               Expanded(
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        '${session.statusBySource.length} 个来源 · ${flat.length} 条结果'
-                        '${filter != null && flat.length != all.length ? '（已按${_typeLabels[filter]}筛选）' : ''}'
-                        '${sourceFilter != null ? '（仅看：${_sourceNameOf(sourceFilter)}）' : ''}',
-                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                            color: Theme.of(context).colorScheme.onSurfaceVariant),
-                      ),
-                    ),
-                    // 来源筛选后给个清除入口，否则用户得回到健康条再点一次
-                    if (sourceFilter != null)
-                      InkWell(
-                        onTap: () => ref
-                            .read(searchSourceFilterProvider.notifier)
-                            .state = null,
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 4),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(Icons.close,
-                                  size: 14,
-                                  color: Theme.of(context).colorScheme.primary),
-                              Text('全部来源',
-                                  style: TextStyle(
-                                      fontSize: 12,
-                                      color: Theme.of(context)
-                                          .colorScheme
-                                          .primary)),
-                            ],
-                          ),
-                        ),
-                      ),
-                  ],
+                child: Text(
+                  '${widget.session.statusBySource.length} 个来源 · ${flat.length} 条结果'
+                  '${filter != null && flat.length != all.length ? '（已按${_typeLabels[filter]}筛选）' : ''}'
+                  '${sourceFilter != null ? '（仅看：${_sourceNameOf(sourceFilter)}）' : ''}'
+                  '${inResult.isNotEmpty ? '（结果中搜：$inResult）' : ''}',
+                  style: Theme.of(context)
+                      .textTheme
+                      .bodySmall
+                      ?.copyWith(color: scheme.onSurfaceVariant),
                 ),
               ),
+              if (sourceFilter != null)
+                InkWell(
+                  onTap: () => ref
+                      .read(searchSourceFilterProvider.notifier)
+                      .state = null,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 4),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.close, size: 14, color: scheme.primary),
+                        Text('全部来源',
+                            style: TextStyle(
+                                fontSize: 12, color: scheme.primary)),
+                      ],
+                    ),
+                  ),
+                ),
               PopupMenuButton<SearchSortMode>(
                 initialValue: sortMode,
                 onSelected: (m) =>
                     ref.read(searchSortModeProvider.notifier).state = m,
                 itemBuilder: (_) => const [
                   PopupMenuItem(
-                      value: SearchSortMode.relevance, child: Text('综合排序')),
+                      value: SearchSortMode.relevance,
+                      child: Text('综合排序')),
                   PopupMenuItem(
                       value: SearchSortMode.type, child: Text('按类型分组')),
+                  PopupMenuItem(
+                      value: SearchSortMode.time, child: Text('按时间排序')),
+                  PopupMenuItem(
+                      value: SearchSortMode.size, child: Text('按大小排序')),
                 ],
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     Text(
-                        sortMode == SearchSortMode.type ? '按类型分组' : '综合排序',
+                        switch (sortMode) {
+                          SearchSortMode.relevance => '综合排序',
+                          SearchSortMode.type => '按类型分组',
+                          SearchSortMode.time => '按时间',
+                          SearchSortMode.size => '按大小',
+                        },
                         style: Theme.of(context)
                             .textTheme
                             .bodySmall
-                            ?.copyWith(
-                                color: Theme.of(context).colorScheme.primary)),
+                            ?.copyWith(color: scheme.primary)),
                     Icon(Icons.keyboard_arrow_down,
-                        size: 16, color: Theme.of(context).colorScheme.primary),
+                        size: 16, color: scheme.primary),
                   ],
                 ),
               ),
             ],
           ),
         ),
-        // 来源健康条：横滑胶囊，失败的点重试（整词重搜）
+        // 二次检索输入框
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
+          child: SizedBox(
+            height: 36,
+            child: TextField(
+              decoration: InputDecoration(
+                hintText: '在结果中筛选…',
+                prefixIcon:
+                    const Icon(Icons.filter_alt_outlined, size: 18),
+                isDense: true,
+                contentPadding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 0),
+              ),
+              onChanged: (v) =>
+                  ref.read(searchInResultProvider.notifier).state = v,
+            ),
+          ),
+        ),
+        // 来源健康条
         _HealthBar(
-          session: session,
-          onRetry: onRetry,
+          session: widget.session,
+          onRetry: widget.onRetry,
           selected: sourceFilter,
           onToggle: (id) =>
               ref.read(searchSourceFilterProvider.notifier).state = id,
@@ -508,25 +638,152 @@ class _ResultsView extends ConsumerWidget {
           child: flat.isEmpty
               ? (all.isNotEmpty
                   ? Center(
-                      child: Text('该类型下暂无结果',
-                          style: Theme.of(context)
-                              .textTheme
-                              .bodyMedium
-                              ?.copyWith(
-                                  color:
-                                      Theme.of(context).colorScheme.onSurfaceVariant)),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text('该类型下暂无结果',
+                              style: TextStyle(
+                                  color: scheme.onSurfaceVariant)),
+                          const SizedBox(height: 8),
+                          TextButton(
+                            onPressed: () => _applyTypeFilter(ref, null),
+                            child: const Text('清除类型筛选'),
+                          ),
+                        ],
+                      ),
                     )
-                  : session.finished && done == 0
-                      ? _NoResult(onGoSources: onGoSources)
-                      : _Searching(session: session))
-              : ListView.builder(
-                  padding: const EdgeInsets.only(bottom: 8),
-                  itemCount: flat.length,
-                  itemBuilder: (context, index) =>
-                      _ResultTile(result: flat[index]),
-                ),
+                  : widget.session.finished && done == 0
+                      ? _NoResult(onGoSources: widget.onGoSources)
+                      : _Searching(session: widget.session))
+              : _buildList(visible, flat.length, hasMore, running,
+                  sortMode, scheme),
         ),
       ],
+    );
+  }
+
+  Widget _buildList(
+    List<SearchResult> visible,
+    int total,
+    bool hasMore,
+    int running,
+    SearchSortMode sortMode,
+    ColorScheme scheme,
+  ) {
+    // 按类型分组：在类型边界插入标题分隔器
+    final items = <_DisplayItem>[];
+    if (sortMode == SearchSortMode.type) {
+      final groups = <SourceType, List<SearchResult>>{};
+      for (final r in visible) {
+        groups.putIfAbsent(r.type, () => []).add(r);
+      }
+      for (final entry in groups.entries) {
+        items.add(_DisplayItem.header(entry.key));
+        for (final r in entry.value) {
+          items.add(_DisplayItem.result(r));
+        }
+      }
+    } else {
+      for (final r in visible) {
+        items.add(_DisplayItem.result(r));
+      }
+    }
+
+    return ListView.builder(
+      padding: const EdgeInsets.only(bottom: 8),
+      itemCount: items.length + 1,
+      itemBuilder: (context, index) {
+        if (index == items.length) {
+          return _buildFooter(hasMore, running, total, scheme);
+        }
+        final item = items[index];
+        if (item.isHeader) {
+          return _GroupHeader(type: item.headerType!);
+        }
+        return _ResultTile(
+            result: item.result!, keyword: widget.session.keyword);
+      },
+    );
+  }
+
+  Widget _buildFooter(
+      bool hasMore, int running, int total, ColorScheme scheme) {
+    if (hasMore) {
+      return Padding(
+        padding: const EdgeInsets.all(16),
+        child: Center(
+          child: OutlinedButton(
+            onPressed: () => setState(() => _visibleCount += _pageSize),
+            child: Text('加载更多（共 $total 条）'),
+          ),
+        ),
+      );
+    }
+    if (running > 0) {
+      return Padding(
+        padding: const EdgeInsets.all(16),
+        child: Center(
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2)),
+              const SizedBox(width: 8),
+              Text('正在从 $running 个来源获取…',
+                  style: TextStyle(
+                      color: scheme.onSurfaceVariant, fontSize: 12)),
+            ],
+          ),
+        ),
+      );
+    }
+    return Padding(
+      padding: const EdgeInsets.all(16),
+      child: Center(
+        child: Text('已展示全部 $total 条结果',
+            style: TextStyle(color: scheme.outline, fontSize: 12)),
+      ),
+    );
+  }
+}
+
+/// 分组展示项：结果或类型标题
+class _DisplayItem {
+  final SearchResult? result;
+  final SourceType? headerType;
+  _DisplayItem.result(this.result) : headerType = null;
+  _DisplayItem.header(this.headerType) : result = null;
+  bool get isHeader => headerType != null;
+}
+
+/// 类型分组标题分隔器
+class _GroupHeader extends StatelessWidget {
+  final SourceType type;
+  const _GroupHeader({required this.type});
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final color = _typeColor(scheme, type);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+      child: Row(
+        children: [
+          Icon(_typeIcons[type] ?? Icons.link, size: 16, color: color),
+          const SizedBox(width: 6),
+          Text(
+            _typeLabels[type] ?? type.name,
+            style: TextStyle(
+                fontSize: 13, fontWeight: FontWeight.bold, color: color),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Divider(height: 1, color: color.withValues(alpha: 0.3)),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -591,26 +848,51 @@ class _HealthBar extends ConsumerWidget {
           const <SearchableSource>[])
         s.meta.id: s.meta.name,
     };
+    final showFade = session.statusBySource.length > 5;
     return SizedBox(
       height: 34,
-      child: ListView(
-        scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+      child: Stack(
         children: [
-          for (final e in session.statusBySource.entries)
-            _HealthCapsule(
-              name: session.resultsBySource[e.key]?.firstOrNull?.sourceName ??
-                  names[e.key] ??
-                  e.key,
-              status: e.value,
-              message: session.errorsBySource[e.key],
-              onRetry: e.value == SourceStatus.failed ? onRetry : null,
-              // 有结果的源才能筛；失败的源保持「点一下重试」
-              count: session.resultsBySource[e.key]?.length,
-              selected: selected == e.key,
-              onToggle: (session.resultsBySource[e.key]?.isNotEmpty ?? false)
-                  ? () => onToggle(selected == e.key ? null : e.key)
-                  : null,
+          ListView(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+            children: [
+              for (final e in session.statusBySource.entries)
+                _HealthCapsule(
+                  name: session.resultsBySource[e.key]?.firstOrNull?.sourceName ??
+                      names[e.key] ??
+                      e.key,
+                  status: e.value,
+                  message: session.errorsBySource[e.key],
+                  onRetry: e.value == SourceStatus.failed ? onRetry : null,
+                  count: session.resultsBySource[e.key]?.length,
+                  selected: selected == e.key,
+                  onToggle: (session.resultsBySource[e.key]?.isNotEmpty ?? false)
+                      ? () => onToggle(selected == e.key ? null : e.key)
+                      : null,
+                ),
+            ],
+          ),
+          if (showFade)
+            Positioned(
+              right: 0,
+              top: 0,
+              bottom: 0,
+              width: 20,
+              child: IgnorePointer(
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.centerLeft,
+                      end: Alignment.centerRight,
+                      colors: [
+                        Theme.of(context).colorScheme.surface.withValues(alpha: 0),
+                        Theme.of(context).colorScheme.surface,
+                      ],
+                    ),
+                  ),
+                ),
+              ),
             ),
         ],
       ),
@@ -679,6 +961,10 @@ class _HealthCapsule extends StatelessWidget {
                       fontWeight:
                           selected ? FontWeight.bold : FontWeight.normal,
                       color: failed || selected ? color : null)),
+              if (selected) ...[
+                const SizedBox(width: 2),
+                Icon(Icons.close, size: 11, color: color),
+              ],
               if (failed && message != null)
                 Tooltip(
                   message: message!,
@@ -830,7 +1116,7 @@ class _Badge extends StatelessWidget {
   }
 }
 
-/// 来源徽标：小灰边框胶囊
+/// 来源徽标：底色胶囊，与类型徽章视觉风格统一
 class _SourceBadge extends StatelessWidget {
   final String name;
   const _SourceBadge(this.name);
@@ -842,8 +1128,7 @@ class _SourceBadge extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(6),
-        border: Border.all(
-            color: scheme.outlineVariant.withValues(alpha: 0.8)),
+        color: scheme.outlineVariant.withValues(alpha: 0.3),
       ),
       child: Text(name,
           style: TextStyle(
@@ -855,7 +1140,8 @@ class _SourceBadge extends StatelessWidget {
 /// 聚合结果条目：按 type 分形态
 class _ResultTile extends ConsumerWidget {
   final SearchResult result;
-  const _ResultTile({required this.result});
+  final String keyword;
+  const _ResultTile({required this.result, this.keyword = ''});
 
   /// 是否已经是 http 直链。
   /// MusicFree 插件的搜索结果普遍不带直链（url 为空），
@@ -1530,6 +1816,8 @@ class _ResultTile extends ConsumerWidget {
         width: 44,
         height: 44,
         fit: BoxFit.cover,
+        cacheWidth: 88,
+        cacheHeight: 88,
         errorBuilder: (_, __, ___) => placeholder(),
       ),
     );
@@ -1570,10 +1858,16 @@ class _ResultTile extends ConsumerWidget {
         : '';
     return ListTile(
       leading: _leading(scheme),
-      title: Text(result.title,
-          maxLines: 2,
-          overflow: TextOverflow.ellipsis,
-          style: const TextStyle(fontWeight: FontWeight.w500)),
+      title: RichText(
+        maxLines: 2,
+        overflow: TextOverflow.ellipsis,
+        text: _highlightTitle(
+          result.title,
+          keyword,
+          const TextStyle(fontWeight: FontWeight.w500),
+          scheme.primary,
+        ),
+      ),
       isThreeLine: false,
       subtitle: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1586,26 +1880,19 @@ class _ResultTile extends ConsumerWidget {
                 : Text(bits.join(' · '),
                     maxLines: 1, overflow: TextOverflow.ellipsis),
           const SizedBox(height: 2),
-          Row(
-            mainAxisSize: MainAxisSize.min,
+          Wrap(
+            spacing: 4,
+            runSpacing: 2,
             children: [
               _Badge(_typeLabels[result.type] ?? result.type.name,
                   _typeColor(scheme, result.type)),
-              if (quality != null) ...[
-                const SizedBox(width: 4),
+              if (quality != null)
                 _Badge(quality, scheme.primary),
-              ],
-              if (audiobookMeta.isNotEmpty) ...[
-                const SizedBox(width: 4),
+              if (audiobookMeta.isNotEmpty)
                 _Badge(audiobookMeta, _typeColor(scheme, SourceType.audiobook)),
-              ],
-              if (bookFormat.isNotEmpty) ...[
-                const SizedBox(width: 4),
+              if (bookFormat.isNotEmpty)
                 _Badge(bookFormat, _typeColor(scheme, SourceType.book)),
-              ],
-              // B 站等视频型音源：可点 MV 徽章进视频播放页
-              if ((result.extra?['bvid'] ?? '').isNotEmpty) ...[
-                const SizedBox(width: 4),
+              if ((result.extra?['bvid'] ?? '').isNotEmpty)
                 GestureDetector(
                   onTap: () => Navigator.push(
                     context,
@@ -1616,8 +1903,6 @@ class _ResultTile extends ConsumerWidget {
                   ),
                   child: _Badge('MV', const Color(0xFFFF5D8F)),
                 ),
-              ],
-              const SizedBox(width: 4),
               _SourceBadge(result.sourceName),
             ],
           ),

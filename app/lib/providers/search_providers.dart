@@ -91,8 +91,8 @@ final searchSessionProvider =
     StateNotifierProvider<SearchSessionNotifier, SearchSession?>(
         (ref) => SearchSessionNotifier(ref));
 
-/// 结果排序方式：综合（保持各源返回顺序）/ 按类型分组
-enum SearchSortMode { relevance, type }
+/// 结果排序方式：综合（保持各源返回顺序）/ 按类型分组 / 按时间 / 按大小
+enum SearchSortMode { relevance, type, time, size }
 
 final searchSortModeProvider =
     StateProvider<SearchSortMode>((ref) => SearchSortMode.relevance);
@@ -102,3 +102,6 @@ final searchSortModeProvider =
 /// 只在已返回的结果里过滤，**不触发重新搜索**
 /// （结果都已经在内存里了，没必要再打一次网络）。
 final searchSourceFilterProvider = StateProvider<String?>((ref) => null);
+
+/// 二次检索：在已返回结果中按关键词前端过滤（空串 = 不过滤）
+final searchInResultProvider = StateProvider<String>((ref) => '');
