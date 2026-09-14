@@ -8,6 +8,8 @@ import 'package:package_info_plus/package_info_plus.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'github_release_feed.dart';
+
 /// 「从 GitHub 更新」的纯逻辑层：查版本、挑包、下载，不碰 UI。
 ///
 /// 发布物由 CI（.github/workflows/build.yml）在推 v* tag 时产出：
@@ -58,10 +60,16 @@ class UpdateService {
     }
   }
 
-  /// 拉取最新 Release（只直连：公共加速前缀基本不代理 api.github.com）。
-  /// 失败以 [UpdateCheckResult.error] 返回，不抛异常，方便启动期静默吞掉。
+  /// 拉取最新 Release。
+  ///
+  /// 顺序刻意是「atom 优先、API 兜底」：未认证的 REST API 配额只有
+  /// 60 次/小时/**出口 IP**，手机走运营商 NAT/校园网/代理池时整池设备共享，
+  /// 用户随手一点就撞限流；`releases.atom` 是网页端点，不吃 core 配额。
+  /// API 只在 atom 拿不到时兜底（它能给出精确的资产名与大小）。
   static Future<UpdateCheckResult> check({String? abiHint}) async {
     final current = await currentVersion();
+    final feed = await ReleaseFeed.fetch(owner, repo, abiHint: abiHint);
+    if (feed != null) return fromFeed(feed, current);
     try {
       final resp = await _dio.get<dynamic>(latestApi);
       final data = resp.data;
@@ -76,6 +84,34 @@ class UpdateService {
     } catch (e) {
       return UpdateCheckResult.error('$e');
     }
+  }
+
+  /// 纯函数：atom 订阅结果 → 更新判定（与 [evaluate] 相同的比较规则）。
+  static UpdateCheckResult fromFeed(FeedRelease feed, AppVersion? current) {
+    final latest = AppVersion.parse(feed.tagName);
+    if (feed.tagName.isEmpty || latest == null) {
+      return UpdateCheckResult.error('无法解析版本号 ${feed.tagName}');
+    }
+    if (current == null) {
+      return UpdateCheckResult.error('无法读取当前版本');
+    }
+    if (latest.compareTo(current) <= 0) {
+      return UpdateCheckResult.upToDate(current: current, latest: latest);
+    }
+    final a = feed.asset;
+    final asset = a == null ? null : ReleaseAsset(a.name, a.url, a.size);
+    return UpdateCheckResult(
+      status: UpdateStatus.available,
+      current: current,
+      latest: latest,
+      release: ReleaseInfo(
+        tagName: feed.tagName,
+        name: feed.tagName,
+        changelog: feed.changelog,
+        assets: [if (asset != null) asset],
+      ),
+      asset: asset,
+    );
   }
 
   /// 纯函数：Release JSON → 更新判定。抽出来是为了能离线单测版本比较与选包。
@@ -252,7 +288,7 @@ class UpdateService {
         return '连接超时';
       case DioExceptionType.badResponse:
         final code = e.response?.statusCode;
-        if (code == 403 || code == 429) return '访问过于频繁(GitHub 限流 $code)';
+        if (code == 403 || code == 429) return '访问太频繁，稍后再试（未登录的频率上限）';
         if (code == 404) return '还没有发布过版本';
         return '服务返回 $code';
       case DioExceptionType.cancel:

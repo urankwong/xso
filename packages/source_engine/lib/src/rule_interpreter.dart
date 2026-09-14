@@ -79,6 +79,34 @@ String extractHtmlText(String html, String selector) {
       .join('\n');
 }
 
+/// 正文提取（章节内容专用）：候选链首个有命中的选择器，
+/// 其**全部**匹配元素按文档序拼接。
+///
+/// 与 [_extractField]（取首个）的区别：Legado 正文规则的典型写法
+/// `#readerContent@p@text` 语义是"取容器内**所有**段落"，只取首个
+/// 会把整章截断成第一段（分页截断之外的另一处内容丢失源）。
+/// 每个元素的属性值（text/html/…）先剥空白再 join('\n')。
+String? extractFieldAll(String html, FieldRule rule) {
+  final doc = html_parser.parse(html);
+  for (final sel in rule.candidates) {
+    if (sel.isEmpty) continue; // 空选择器（元素自身简写）对整页无意义
+    List<dom.Element> els;
+    try {
+      els = doc.querySelectorAll(sel);
+    } catch (_) {
+      continue; // 非法选择器不连坐，继续试下一个候选
+    }
+    final parts = <String>[];
+    for (final el in els) {
+      final v = _attrOf(el, rule.attr);
+      if (v != null && v.trim().isNotEmpty) parts.add(v.trim());
+    }
+    if (parts.isEmpty) continue;
+    return _applyReplace(parts.join('\n'), rule);
+  }
+  return null;
+}
+
 // ── 书籍详情 / 目录 / 正文 用的整页取值 API ──────────────────────────
 
 /// 从整页 HTML 按单条规则取一个字段（书籍详情元信息用）。

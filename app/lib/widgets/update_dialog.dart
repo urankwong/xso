@@ -77,7 +77,15 @@ class _UpdateCheckTileState extends State<UpdateCheckTile> {
             content: Text('已是最新版本 v${res.current?.display ?? _version}')));
       case UpdateStatus.failed:
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            content: Text('检查失败：${res.error ?? "未知错误"}（可在项目页手动下载）')));
+          content: Text('暂时没拿到最新版本：${res.error ?? "未知错误"}'),
+          duration: const Duration(seconds: 6),
+          // 检查通道不可用时也要有明确退路：直接开 Release 页
+          action: SnackBarAction(
+            label: '去下载页',
+            onPressed: () => launchUrl(Uri.parse(UpdateService.releasePage),
+                mode: LaunchMode.externalApplication),
+          ),
+        ));
     }
   }
 

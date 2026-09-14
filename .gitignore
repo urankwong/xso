@@ -48,3 +48,8 @@ document.documentElement.outerHTML.substring(0
 # 内置源内容(含站点域名/规则/JS)——真实源存放于独立私有仓,
 # 仅 CI 构建时拉入, 本地保留未跟踪副本, 不进公开仓
 app/assets/sources/
+
+# 代码索引工具产物 / 调试临时文件
+.codegraph/
+ci_run.json
+head.bin

@@ -61,9 +61,20 @@ class BookHooks {
   /// 返回纯文本正文
   final String? content;
 
-  const BookHooks({this.bookInfo, this.toc, this.content});
+  /// 动态求值"下一页 URL"（正文分页）。
+  ///
+  /// 当 `nextContentUrl` 规则含 `<js>`/`@js:`（如黄金屋用 JS 从当前页
+  /// 页码生成全部后续分页 URL）时，静态路径无法求值，改由此钩子在
+  /// 运行时计算。调用约定：引擎以 `(function(body, url){ hook })(pageBody,
+  /// pageUrl)` 双参注入——body 是当前页 HTML，url 是当前页地址（钩子内
+  /// baseUrl 已被覆盖为当前页地址，与 Legado 语义一致）。
+  /// 返回值经 JSON.stringify 归一：字符串（单下一页）或数组（批量后续页）。
+  final String? nextPage;
 
-  bool get isEmpty => bookInfo == null && toc == null && content == null;
+  const BookHooks({this.bookInfo, this.toc, this.content, this.nextPage});
+
+  bool get isEmpty =>
+      bookInfo == null && toc == null && content == null && nextPage == null;
 }
 
 /// 书籍详情元信息规则。字段全部可选：不同站点能提供的信息差异很大，
@@ -104,7 +115,16 @@ class TocRule {
   /// 章节链接（相对列表项）
   final FieldRule url;
 
-  const TocRule({required this.list, required this.name, required this.url});
+  /// 下一页目录链接（Legado `nextTocUrl`）：目录分页站点用，
+  /// 引擎据此自动串页拼接完整章节列表
+  final FieldRule? nextUrl;
+
+  const TocRule({
+    required this.list,
+    required this.name,
+    required this.url,
+    this.nextUrl,
+  });
 }
 
 /// 正文规则：从章节页取出正文
@@ -250,7 +270,11 @@ TocRule? _parseTocRule(Map<String, dynamic> root) {
   if (name == null || url == null) {
     throw SourceSchemaException('toc.name 与 toc.url 必填');
   }
-  return TocRule(list: list, name: name, url: url);
+  return TocRule(
+      list: list,
+      name: name,
+      url: url,
+      nextUrl: _fieldFrom(m['nextTocUrl'], 'toc.nextTocUrl'));
 }
 
 ContentRule? _parseContentRule(Map<String, dynamic> root) {
@@ -260,8 +284,11 @@ ContentRule? _parseContentRule(Map<String, dynamic> root) {
   if (c == null) {
     throw SourceSchemaException('content.content 必填');
   }
+  // 分页字段：Legado 标准名是 nextContentUrl，`nextUrl` 是历史别名
   return ContentRule(
-      content: c, nextUrl: _fieldFrom(m['nextUrl'], 'content.nextUrl'));
+      content: c,
+      nextUrl: _fieldFrom(m['nextContentUrl'], 'content.nextContentUrl') ??
+          _fieldFrom(m['nextUrl'], 'content.nextUrl'));
 }
 
 SourceMeta _parseMeta(Map<String, dynamic> root) {

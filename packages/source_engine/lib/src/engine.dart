@@ -30,6 +30,11 @@ class SourceEngine {
   static const hookTimeout = Duration(seconds: 5);
   static const searchTimeout = Duration(seconds: 10);
 
+  /// 正文/目录串页的保护性上限：正常章节不会超过几十页分页，
+  /// 超限视为站点异常（无限分页/翻页死循环），截断保命。
+  static const maxContentPages = 50;
+  static const maxTocPages = 50;
+
   SourceEngine({required this.jsRuntime, required this.fetcher}) {
     // 沙箱 API 白名单注册：JS 只能通过这些与外界交互
     jsRuntime.registerHostFunction('log', (args) async => null);
@@ -290,14 +295,18 @@ class SourceEngine {
   /// 目录。Legado 的目录多数就在详情页（bookUrl 指向的那个页面）里，
   /// 少数站点用独立的目录页 —— 后者由源把 ruleToc 的链接写在详情页里，
   /// 当前实现先覆盖"同页"这一主流情况。
+  ///
+  /// 支持目录分页（`nextTocUrl`）：目录页带"下一页"链接时自动串页拼接，
+  /// 按 URL 去重防重复章节，[maxTocPages] 上限 + visited 集合防死循环。
   Future<List<Chapter>> fetchChapters(Source source, String bookUrl) async {
     final hook = source.bookHooks?.toc;
     final rule = source.toc;
     if (hook == null && rule == null) return const [];
     try {
-      final body = await _get(bookUrl, source);
       final base = _baseOf(source);
       if (hook != null) {
+        // JS 钩子路径：整段目录交给 JS（当前不支持钩子型目录分页）
+        final body = await _get(bookUrl, source);
         final raw = await jsRuntime.evaluate(
             '(function(body){ $hook })(${jsonEncode(body)})',
             timeout: hookTimeout);
@@ -313,13 +322,27 @@ class SourceEngine {
         }
         return out;
       }
-      final items = selectAll(body, rule!.list);
       final out = <Chapter>[];
-      for (final it in items) {
-        final t = extractFieldIn(it, rule.name);
-        final u = extractFieldIn(it, rule.url);
-        if (t == null || u == null) continue;
-        out.add(Chapter(title: t, url: _abs(u, base) ?? u));
+      final seen = <String>{};
+      final visited = <String>{bookUrl};
+      var pageUrl = bookUrl;
+      var pageBody = await _get(bookUrl, source);
+      for (var page = 0; page < maxTocPages && pageUrl.isNotEmpty; page++) {
+        final items = selectAll(pageBody, rule!.list);
+        for (final it in items) {
+          final t = extractFieldIn(it, rule.name);
+          final u = extractFieldIn(it, rule.url);
+          if (t == null || u == null) continue;
+          final abs = _abs(u, base) ?? u;
+          if (!seen.add(abs)) continue;
+          out.add(Chapter(title: t, url: abs));
+        }
+        final nextRule = rule.nextUrl;
+        if (nextRule == null) break;
+        final n = _abs(extractField(pageBody, nextRule), base);
+        if (n == null || n == pageUrl || !visited.add(n)) break;
+        pageUrl = n;
+        pageBody = await _get(pageUrl, source);
       }
       return out;
     } on SourceExecutionException {
@@ -329,31 +352,43 @@ class SourceEngine {
     }
   }
 
-  /// 正文。静态规则带 nextUrl 时串页；JS 钩子则单页返回（钩子内部可自行处理）。
+  /// 正文。支持三种分页来源，统一串页拼接为完整章节：
+  /// 1. 静态 `nextUrl`/`nextContentUrl` 规则（每页解析"下一页"链接）；
+  /// 2. JS 动态下一页钩子（`bookHooks.nextPage`，可返回单个 URL 或 URL 数组）；
+  /// 3. 无分页规则（单页章节，直接返回）。
+  ///
+  /// 防护：visited 集合防环路、[maxContentPages] 上限防异常站点、
+  /// 页与页之间以空行分隔避免段落粘连。
   Future<String> fetchContent(Source source, String chapterUrl) async {
     final hook = source.bookHooks?.content;
     final rule = source.content;
     if (hook == null && rule == null) return '';
     try {
-      final body = await _get(chapterUrl, source);
-      if (hook != null) {
-        final raw = await jsRuntime.evaluate(
-            '(function(body){ $hook })(${jsonEncode(body)})',
-            timeout: hookTimeout);
-        return stripTags(raw);
-      }
+      final base = _baseOf(source);
       final buf = StringBuffer();
-      var url = chapterUrl;
-      var pageBody = body;
-      for (var page = 0; page < 10 && url.isNotEmpty; page++) {
-        final raw = extractField(pageBody, rule!.content) ?? '';
-        buf.write(stripTags(raw));
-        final nextRule = rule.nextUrl;
-        if (nextRule == null) break;
-        final n = _abs(extractField(pageBody, nextRule), _baseOf(source));
-        if (n == null || n == url) break;
-        url = n;
-        pageBody = await _get(url, source);
+      final visited = <String>{chapterUrl};
+      final pending = <String>[chapterUrl];
+      var pages = 0;
+      while (pending.isNotEmpty && pages < maxContentPages) {
+        final url = pending.removeAt(0);
+
+        final pageBody = await _get(url, source);
+        pages++;
+        // 提取本页正文：JS 钩子优先，否则静态规则（多元素聚合）
+        final raw = hook != null
+            ? stripTags(await _evalBookHook(hook, pageBody, url, source))
+            : extractFieldAll(pageBody, rule!.content);
+        final text = raw?.trim() ?? '';
+        if (text.isNotEmpty) {
+          if (buf.isNotEmpty) buf.write('\n\n');
+          buf.write(text);
+        }
+        final nexts = await _resolveNextPages(source, pageBody, url, base);
+        for (final n in nexts) {
+          if (visited.contains(n)) continue;
+          visited.add(n);
+          pending.add(n);
+        }
       }
       return buf.toString().trim();
     } on SourceExecutionException {
@@ -361,6 +396,102 @@ class SourceEngine {
     } catch (e) {
       throw SourceExecutionException(source.meta.id, e.toString());
     }
+  }
+
+  /// 求值当前页的"下一页"地址列表（0 个 = 无下一页）。
+  ///
+  /// JS 动态钩子（含 `<js>` 的 nextContentUrl）优先于静态规则；
+  /// 钩子返回值可能是字符串（单个 URL）或数组（一次性列出全部后续页，
+  /// 典型如黄金屋按当前页码生成第 2..N 页）。
+  Future<List<String>> _resolveNextPages(
+      Source source, String pageBody, String pageUrl, String base) async {
+    final nextHook = source.bookHooks?.nextPage;
+    if (nextHook != null && nextHook.isNotEmpty) {
+      final raw = await _evalBookHook(nextHook, pageBody, pageUrl, source);
+      return _parseNextUrls(raw, base);
+    }
+    final nextRule = source.content?.nextUrl;
+    if (nextRule == null) return const [];
+    final n = _abs(extractField(pageBody, nextRule), base);
+    if (n == null || n == pageUrl) return const [];
+    return [n];
+  }
+
+  /// 解析下一页钩子返回值 → 绝对 URL 列表（JSON 字符串或裸 URL 容错）
+  List<String> _parseNextUrls(String raw, String base) {
+    final out = <String>[];
+    final trimmed = raw.trim();
+    if (trimmed.isEmpty) return out;
+    Object? decoded;
+    try {
+      decoded = jsonDecode(trimmed);
+    } catch (_) {
+      decoded = null;
+    }
+    final items = switch (decoded) {
+      List l => l,
+      String s => [s],
+      _ => [trimmed], // 非 JSON 输出当作单个 URL
+    };
+    for (final e in items) {
+      final u = _abs(e?.toString(), base);
+      if (u != null && u.isNotEmpty) out.add(u);
+    }
+    return out;
+  }
+
+  /// 带重放协议的钩子求值（java.ajax 支持）。
+  ///
+  /// 背景：QuickJS 是同步引擎、Dart 无法提供同步网络，而 Legado 源里
+  /// `java.ajax(url)` 是同步语义（Rhino 靠 Continuation 挂起实现）。
+  /// 采用「重放」协议在纯同步 evaluate 内模拟：
+  /// 1. 第 1 轮执行钩子，`java.ajax` 把缺失 URL 登记到 `__ajaxNeed` 并返回 ''；
+  /// 2. 引擎发现待取列表 → 异步抓取 → `evaluate` 写入 `__ajaxCache`；
+  /// 3. 重放钩子，本轮命中缓存。链式 ajax 由多轮重放天然支持。
+  ///
+  /// [hookAjaxRounds] 上限防"每轮都产生新请求"的非确定钩子死循环。
+  /// 缺点：钩子每轮重复执行（副作用 API 重复调用，可接受）。
+  static const hookAjaxRounds = 4;
+
+  Future<String> _evalBookHook(
+      String hook, String body, String? url, Source source) async {
+    final params = 'body, url';
+    final args = '(${jsonEncode(body)}, ${jsonEncode(url ?? '')})';
+    for (var round = 0; round < hookAjaxRounds; round++) {
+      final script = 'globalThis.__ajaxNeed = {};\n'
+          'var __out = (function($params){ $hook })$args;\n'
+          'var __keys = Object.keys(globalThis.__ajaxNeed);\n'
+          'if (__keys.length > 0) { JSON.stringify({ __need: __keys }); }\n'
+          'else { JSON.stringify({ __result: (__out == null ? null : String(__out)) }); }';
+      final raw = await jsRuntime.evaluate(script, timeout: hookTimeout);
+      Object? decoded;
+      try {
+        decoded = jsonDecode(raw.trim());
+      } catch (_) {
+        // 非 JSON 输出：视为纯结果（容错旧式运行时）
+        return raw;
+      }
+      if (decoded is Map) {
+        final need = decoded['__need'];
+        if (need is List && need.isNotEmpty) {
+          for (final u in need) {
+            final target = u?.toString() ?? '';
+            if (target.isEmpty) continue;
+            final pageBody = await _get(target, source);
+            await jsRuntime.evaluate(
+                'globalThis.__ajaxCache = globalThis.__ajaxCache || {};\n'
+                'globalThis.__ajaxCache[${jsonEncode(target)}] = ${jsonEncode(pageBody)};\n'
+                '1',
+                timeout: hookTimeout);
+          }
+          continue; // 重放
+        }
+        final result = decoded['__result'];
+        return result?.toString() ?? '';
+      }
+      return raw;
+    }
+    return '';
   }
 }
 

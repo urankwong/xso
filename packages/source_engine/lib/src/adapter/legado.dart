@@ -213,11 +213,33 @@ class LegadoAdapter {
           'return evalRule(${jsonEncode(cRule)}, body);';
     }
 
-    if (infoHook == null && tocHook == null && contentHook == null) {
+    // 正文分页的"下一页"规则含 JS（如黄金屋：从当前页的页码标注生成
+    // 第 2..N 页的全部 URL）→ 静态 FieldRule 无法表达，生成 nextPage 钩子。
+    // 结构：<js> 前的静态部分先经 evalRule 求值（含 ## 替换），
+    // 结果作为 result 传入 JS；JS 返回字符串或 URL 数组。
+    String? nextHook;
+    final nextRaw =
+        (ct?['nextContentUrl'] ?? ct?['nextUrl'] ?? '').toString().trim();
+    if (nextRaw.isNotEmpty && _extractJs(nextRaw) != null) {
+      final js = _extractJs(nextRaw)!;
+      final staticPart =
+          nextRaw.replaceAll(RegExp(r'<js>[\s\S]*?</js>'), '').trim();
+      nextHook = '${_jsPrelude(base, jsLib: jsLib)}\n'
+          // Legado 语义：正文上下文的 baseUrl = 当前章节页地址（引擎双参注入）
+          'baseUrl = (typeof url !== "undefined" && url) ? url : baseUrl;\n'
+          'var __result = "";\n'
+          'try { __result = evalRule(${jsonEncode(staticPart)}, body); } catch (e) {}\n'
+          'var __v = (function(result, baseUrl, key, page, source, java, cookie){\n'
+          '$js\n'
+          '})(__result, baseUrl, key, "", source, java, cookie);\n'
+          'return JSON.stringify(__v == null ? "" : __v);';
+    }
+
+    if (infoHook == null && tocHook == null && contentHook == null && nextHook == null) {
       return null;
     }
     return BookHooks(
-        bookInfo: infoHook, toc: tocHook, content: contentHook);
+        bookInfo: infoHook, toc: tocHook, content: contentHook, nextPage: nextHook);
   }
 
   /// Legado `ruleBookInfo` → 书籍详情元信息规则。
@@ -246,16 +268,28 @@ class LegadoAdapter {
     final name = _optField(toc['chapterName']);
     final url = _optField(toc['chapterUrl']);
     if (list.isEmpty || name == null || url == null) return null;
-    return TocRule(list: _parseSelector(list), name: name, url: url);
+    return TocRule(
+      list: _parseSelector(list),
+      name: name,
+      url: url,
+      // 目录分页（"下一页"目录页链接），引擎据此自动串页拼接完整目录
+      nextUrl: _optField(toc['nextTocUrl']),
+    );
   }
 
   /// Legado `ruleContent` → 正文规则。
+  ///
+  /// 分页字段：Legado 标准名是 **`nextContentUrl`**（`nextUrl` 仅是历史
+  /// 别名，真实书源几乎不用）。只认 `nextUrl` 会导致分页规则被静默丢弃、
+  /// 分页章节只抓到第一页 —— 这是"章节内容不完整"的直接根因。
   ContentRule? _buildContent(dynamic rawContent) {
     final c = _asRuleMap(rawContent);
     if (c == null) return null;
     final content = _optField(c['content']);
     if (content == null) return null;
-    return ContentRule(content: content, nextUrl: _optField(c['nextUrl']));
+    return ContentRule(
+        content: content,
+        nextUrl: _optField(c['nextContentUrl'] ?? c['nextUrl']));
   }
 
   /// Legado 里的**属性名简写**：当 bookList/目录容器已经定位到目标元素时，
@@ -419,7 +453,23 @@ class LegadoAdapter {
         startBrowser: function(){ return true; },
         put: function(k, v){ cache.put(k, v); },
         get: function(k){ return cache.get(k); },
-        ajax: function(){ throw new Error('java.ajax 需异步宿主，暂不支持'); }
+        // java.ajax 的重放协议：QuickJS 是同步引擎、宿主（Dart）无法提供
+        // 同步网络，故第 1 轮执行时把缺失 URL 登记到 __ajaxNeed 并返回空串；
+        // 引擎异步抓取后写入 __ajaxCache 再重放钩子，第 2 轮即命中真实内容。
+        // 链式 ajax（下一次请求依赖上一次响应）由引擎多轮重放天然支持。
+        ajax: function(url){
+          var k = String(url == null ? '' : url);
+          var cache2 = (globalThis.__ajaxCache = globalThis.__ajaxCache || {});
+          var need = (globalThis.__ajaxNeed = globalThis.__ajaxNeed || {});
+          if (k in cache2) return cache2[k];
+          need[k] = true;
+          return '';
+        },
+        ajaxAll: function(urls){
+          var out = [];
+          for (var i = 0; i < (urls || []).length; i++) out.push(this.ajax(urls[i]));
+          return out;
+        }
       };
       // 未知 java.* 方法兜底：Legado 的 java 宿主方法很多（加密/文件/UI…），
       // 逐个实现不现实。用 Proxy 对未实现方法返回空函数，避免
@@ -568,7 +618,10 @@ class LegadoAdapter {
           var rest = r.substring(hi + 2);
           r = r.substring(0, hi);
           var parts = rest.split('##');
-          rep = parts[0]; to = parts.length > 1 ? parts.slice(1).join('##') : '';
+          // Legado 语义：parts[0]=正则，parts[1]=替换串，parts[2+]=flags（忽略）。
+          // 旧的 join('##') 会把 flags 段并进替换串——黄金屋型
+          // `##$1###<js>` 规则（替换后跟 ### 分隔再接 JS）因此替换错乱。
+          rep = parts[0]; to = parts.length > 1 ? parts[1] : '';
         }
         var cands = r.split('||');
         for (var i = 0; i < cands.length; i++) {

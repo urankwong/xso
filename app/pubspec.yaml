@@ -1,7 +1,7 @@
 name: app
 description: 聚合搜索 App 壳
 publish_to: none
-version: 0.1.0+7
+version: 0.1.0+8
 environment:
   sdk: ^3.5.0
 dependencies:
@@ -40,6 +40,9 @@ dependencies:
   qr_flutter: ^4.1.0
   package_info_plus: ^10.2.1
   device_info_plus: ^13.2.0
+  # 听书：Edge TTS（联网，微软神经网络语音，免费无需 key）+ 系统 TTS（离线备用）
+  edge_tts: ^0.1.5
+  flutter_tts: ^4.2.5
 dev_dependencies:
   flutter_test:
     sdk: flutter
