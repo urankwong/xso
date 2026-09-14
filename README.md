@@ -65,14 +65,16 @@ cd app && flutter pub get && flutter run
 
 ## 发布与更新
 
-推 `v*` tag 即由 GitHub Actions（`.github/workflows/build.yml`）构建 `app-debug.apk` 与分架构 release 包，并自动挂到该版本的 Releases 页面。
+推 `v*` tag 即由 GitHub Actions（`.github/workflows/build.yml`）构建 `app-debug.apk` 与分架构 release 包，并自动挂到该版本的 Releases 页面。**tag 用 annotated 形式并写好注释正文**——那段注释就是 App 内更新弹窗展示的更新说明。
 
-App 侧的「设置 → 检查更新」读取 `releases/latest`，按 `版本号+构建号` 比较（如 `v0.1.0+6`）：
+App 侧的「设置 → 检查更新」按 `版本号+构建号` 比较（如 `0.1.0+8`）：
 
+- **优先订阅 `releases.atom`** 而不是 `api.github.com`：未认证的 REST API 配额只有 60 次/小时/**出口 IP**，手机走运营商 NAT、校园网或代理池时大量设备共用同一出口，用户随手一点就撞限流（表现为"访问过于频繁"，对使用者完全不可理解）。atom 是网页端点，不吃该配额；API 仅作兜底，它能给出精确资产名与大小
+- atom 不列资产，因此安装包文件名按 CI 命名规则 `app-<abi>-release.apk` 推导并 HEAD 探测，再按设备 ABI 选包（拿不到架构时默认 `arm64-v8a`）
 - 启动时每天最多静默检查一次，可「跳过此版本」后不再提示
-- 按设备 ABI 自动选包（拿不到架构时默认 `arm64-v8a`），下载进度可视、可取消
+- 下载带进度、可取消，完成后唤起系统安装器（需在系统弹窗中允许「安装未知应用」）
 - 直连 GitHub 失败会自动依次尝试公共加速镜像前缀；仍失败时可复制直链交给浏览器下载
-- 未认证的 GitHub API 限流约 60 次/小时/IP，故静默检查有节流；安装需在系统弹窗中允许「安装未知应用」
+- 检查通道本身不可用时，提示会附带「去下载页」入口，而不是只丢一句技术错误
 
 ## 测试
 
