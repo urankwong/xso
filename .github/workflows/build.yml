@@ -25,9 +25,10 @@ jobs:
     steps:
       - name: Checkout 公开代码
         uses: actions/checkout@v4
-        with:
-          # 发布步骤要读 annotated tag 的注释正文，默认浅克隆拿不到 tag 对象
-          fetch-tags: true
+        # 注意：不要加 fetch-tags: true。checkout 会同时按 commit SHA 与 tag ref
+        # 拉取，二者目标冲突会直接 git exit 128（"Cannot fetch both <sha> and
+        # refs/tags/<name> to refs/tags/<name>"），导致整条流水线从第 2 步就失败。
+        # 需要 tag 注释时，在后面单独精确 fetch 那一个 ref（见「读取 tag 说明」）。
 
       - name: 拉取内置源(只读凭据)
         uses: actions/checkout@v4
@@ -83,10 +84,13 @@ jobs:
         id: notes
         run: |
           # annotated tag 的注释正文就是面向用户的更新说明（App 内更新弹窗直接展示）。
-          # 多行值必须用 heredoc 写 GITHUB_OUTPUT，直接 echo "body=$(...)" 会只留首行。
+          # 浅克隆里没有 tag 对象，只精确拉当前这一个 ref（全量 fetch-tags 会冲突）。
+          git fetch --no-tags --depth=1 origin \
+            "refs/tags/$GITHUB_REF_NAME:refs/tags/$GITHUB_REF_NAME" || true
+          # 多行值必须用 heredoc 写 GITHUB_OUTPUT，直接 echo "body=$(...)" 会只留首行
           {
             echo 'body<<XSO_BODY_EOF'
-            git tag -l --format='%(contents:body)' "$GITHUB_REF_NAME"
+            git tag -l --format='%(contents:body)' "$GITHUB_REF_NAME" || true
             echo 'XSO_BODY_EOF'
           } >> "$GITHUB_OUTPUT"
 
@@ -100,6 +104,9 @@ jobs:
           # 只有 tag 没写注释时才回退为 GitHub 自动生成的变更列表
           body: ${{ steps.notes.outputs.body }}
           generate_release_notes: ${{ steps.notes.outputs.body == '' }}
+          # 路径写错时宁可红着，也别静默发一个没有安装包的 Release
+          # （v0.1.0+7/+8 就是这么发布出「只有 source zip」的空 Release 的）
+          fail_on_unmatched_files: true
           files: |
             app/build/app/outputs/flutter-apk/app-debug.apk
             app/build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
