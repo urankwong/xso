@@ -44,7 +44,6 @@ app/                    # Flutter 壳工程（UI、Riverpod、QuickJS 运行时�
 packages/core/          # 纯 Dart：结果模型、Action、Orchestrator、网盘识别、活性检测、DHT
 packages/source_engine/ # 纯 Dart：源 schema、规则解释器、JS 沙箱抽象、Legado/洛雪/MusicFree 适配器
 packages/data/          # 纯 Dart：drift 数据库（收藏/历史）、源文件仓库
-docs/                   # 设计与各模块方案、测试报告
 tools/                  # 源生成 / 打包脚本
 ```
 
