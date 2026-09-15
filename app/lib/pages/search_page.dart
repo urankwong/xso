@@ -135,6 +135,12 @@ const _providerLabels = {
   'aliyun': '阿里云盘',
   'pan123': '123 云盘',
   'xunlei': '迅雷云盘',
+  'pan115': '115 网盘',
+  'tianyi': '天翼云盘',
+  'uc': 'UC 网盘',
+  'yidong': '移动云盘',
+  'lanzou': '蓝奏云',
+  'wenshushu': '文叔叔',
 };
 
 /// 标题中匹配关键词高亮（不区分大小写），返回 TextSpan 供 RichText 使用
@@ -216,6 +222,43 @@ void _applyTypeFilter(WidgetRef ref, SourceType? type) {
   }
 }
 
+/// 根据关键词特征推断可能的搜索类型，用于在「全部」模式下提示用户缩小范围。
+///
+/// 保守原则：只在强信号时返回，避免误判缩小搜索范围。返回 null = 无法推断。
+/// 这不替代类型 chips，只是给「直接在搜索页输入、没从首页宫格带类型进来」
+/// 的用户一个 proactive 提示，避免全源参与导致无关结果污染。
+SourceType? _inferTypeFromKeyword(String keyword) {
+  final k = keyword.toLowerCase().trim();
+  if (k.isEmpty) return null;
+
+  // 磁力/影视资源特征词
+  if (RegExp(r'(1080p|720p|480p|bluray|web-?rip|x264|h264|hevc|x265|torrent|种子)')
+          .hasMatch(k)) {
+    return SourceType.magnet;
+  }
+  // 音乐格式特征
+  if (RegExp(r'\b(mp3|flac|ape|wav|m4a|ogg|opus|aac|cue)\b').hasMatch(k)) {
+    return SourceType.music;
+  }
+  // 书名号 → 小说
+  if (keyword.contains('《') && keyword.contains('》')) {
+    return SourceType.novel;
+  }
+  // 网盘关键词
+  if (RegExp(r'(网盘|百度网盘|夸克|阿里云盘|123盘|天翼云|提取码|分享码)').hasMatch(keyword)) {
+    return SourceType.pan;
+  }
+  // 纯中文 ≥ 2 字 → 偏向小说（中文人名/书名最常见）
+  if (RegExp(r'^[\u4e00-\u9fa5]{2,}$').hasMatch(keyword)) {
+    return SourceType.novel;
+  }
+  // 纯英文单词（歌手/歌曲名特征）：a-z + 空格，2-40 字符
+  if (RegExp(r'^[a-z][a-z\s.]{1,39}$').hasMatch(k) && !k.contains('   ')) {
+    return SourceType.music;
+  }
+  return null;
+}
+
 class SearchPage extends ConsumerStatefulWidget {
   const SearchPage({super.key});
   @override
@@ -270,6 +313,12 @@ class _SearchPageState extends ConsumerState<SearchPage> {
         ref.watch(searchableSourcesProvider).value?.isNotEmpty == true;
     final showAlbumToggle = filter == SourceType.music && session != null;
 
+    // 类型推断提示：全部模式下根据输入关键词提示可缩小的类型，
+    // 避免直接在搜索页输入时全源参与导致无关结果污染。
+    final typeHint = filter == null && _hasText
+        ? _inferTypeFromKeyword(_controller.text)
+        : null;
+
     return Scaffold(
       appBar: AppBar(
         titleSpacing: 12,
@@ -304,6 +353,48 @@ class _SearchPageState extends ConsumerState<SearchPage> {
       body: Column(
         children: [
           _TypeChips(),
+          if (typeHint != null)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 0, 12, 4),
+              child: InkWell(
+                onTap: () {
+                  ref.read(searchTypeFilterProvider.notifier).set(typeHint);
+                  _submit();
+                },
+                borderRadius: BorderRadius.circular(8),
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: Theme.of(context)
+                        .colorScheme
+                        .primary
+                        .withValues(alpha: 0.08),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.lightbulb_outline,
+                          size: 16,
+                          color: Theme.of(context).colorScheme.primary),
+                      const SizedBox(width: 6),
+                      Text(
+                        '只搜${_typeLabels[typeHint]}更精准',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Theme.of(context).colorScheme.primary,
+                        ),
+                      ),
+                      const SizedBox(width: 4),
+                      Icon(Icons.arrow_forward,
+                          size: 14,
+                          color: Theme.of(context).colorScheme.primary),
+                    ],
+                  ),
+                ),
+              ),
+            ),
           if (showAlbumToggle)
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 2),
@@ -482,15 +573,59 @@ class _ResultsViewState extends ConsumerState<_ResultsView> {
       }
       round++;
     }
-    // 去重：按标题（不区分大小写）保留首次出现
+    // 多维度去重：按资源指纹去重，避免误删不同资源或漏合同一资源。
+    return _dedupByType(out);
+  }
+
+  /// 多维度去重：按资源指纹而非纯标题去重。
+  ///
+  /// 旧实现只按 `title.toLowerCase()` 去重，有两个问题：
+  /// - 误删：标题相同但实际不同资源（不同网盘分享、不同清晰度）被合并；
+  /// - 漏合：标题不同但同一资源（带 [高清]/(1080p) 后缀）不合并。
+  ///
+  /// 现按类型分键：
+  /// - 磁力/ed2k：按 infohash 去重（同 hash = 同资源，最可靠）；
+  /// - 网盘：按 url 去重（同分享链接 = 同资源）；
+  /// - 音乐/书籍：按归一化标题 + 作者去重；
+  /// - 其他：按归一化标题兜底。
+  List<SearchResult> _dedupByType(List<SearchResult> list) {
     final seen = <String>{};
-    return out.where((r) {
-      final key = r.title.trim().toLowerCase();
+    return list.where((r) {
+      final key = _dedupKey(r);
       if (key.isEmpty || seen.contains(key)) return false;
       seen.add(key);
       return true;
     }).toList();
   }
+
+  /// 计算去重键
+  String _dedupKey(SearchResult r) {
+    switch (r.type) {
+      case SourceType.magnet:
+      case SourceType.ed2k:
+        final hash = _infoHashOf(r.url);
+        if (hash != null) return 'hash:$hash';
+        return 'title:${_normalizeTitle(r.title)}';
+      case SourceType.pan:
+        return 'url:${r.url}';
+      case SourceType.music:
+      case SourceType.audiobook:
+        final artist = r.extra?['artist'] ?? '';
+        return 'music:${_normalizeTitle(r.title)}|${_normalizeTitle(artist)}';
+      case SourceType.novel:
+      case SourceType.book:
+      case SourceType.comic:
+        final author = r.extra?['author'] ?? '';
+        return 'book:${_normalizeTitle(r.title)}|${_normalizeTitle(author)}';
+      default:
+        return 'title:${_normalizeTitle(r.title)}';
+    }
+  }
+
+  /// 从磁力链提取 infohash 字符串（小写，不 decode，仅用于比较）
+  static final _btihRe =
+      RegExp(r'xt=urn:btih:([A-Za-z0-9]{32,40})', caseSensitive: false);
+  String? _infoHashOf(String url) => _btihRe.firstMatch(url)?.group(1)?.toLowerCase();
 
   /// 来源展示名：优先用结果里带的 sourceName，查不到再退回源 id
   String _sourceNameOf(String id) {
@@ -530,6 +665,56 @@ class _ResultsViewState extends ConsumerState<_ResultsView> {
     return 0;
   }
 
+  /// 跨源相关性重排：对已去重的结果按关键词全局打分后排序。
+  ///
+  /// 源内 `_rerankByRelevance`（engine.dart）只调整单源内顺序，跨源默认
+  /// 是"交错排列"——各源第 1 条轮流。这会让宽松匹配的无关结果（如小说源
+  /// 搜 adele 返回的中文小说）与精确匹配的音乐结果混排，最相关的没置顶。
+  ///
+  /// 本方法在交错+去重之后做全局打分：完全命中 > 前缀 > 包含 > 无关，
+  /// 同分时保留交错顺序（先到先显示）。只调整展示顺序，不增删条目。
+  List<SearchResult> _rerankCrossSource(
+      List<SearchResult> list, String keyword) {
+    final kw = _normalizeTitle(keyword);
+    if (kw.isEmpty || list.length < 2) return list;
+    final scored = <_Scored>[];
+    for (var i = 0; i < list.length; i++) {
+      scored.add(_Scored(list[i], _crossMatchScore(list[i].title, kw), i));
+    }
+    // 同分时用源健康度降序（好源前置）+ 原始下标兜底。
+    final stats = ref.read(sourceStatsProvider);
+    scored.sort((a, b) {
+      final c = a.score.compareTo(b.score);
+      if (c != 0) return c;
+      final h = stats
+          .healthOf(b.result.sourceId)
+          .compareTo(stats.healthOf(a.result.sourceId));
+      return h != 0 ? h : a.index.compareTo(b.index);
+    });
+    return scored.map((e) => e.result).toList();
+  }
+
+  /// 跨源匹配分值：完全命中 > 前缀 > 包含 > 无关 > 空标题占位
+  int _crossMatchScore(String title, String kw) {
+    if (title.isEmpty) return 4;
+    final t = _normalizeTitle(title);
+    if (t.isEmpty) return 4;
+    if (t == kw) return 0;
+    if (t.startsWith(kw)) return 1;
+    if (t.contains(kw)) return 2;
+    return 3;
+  }
+
+  /// 归一化标题：抹掉空白与常见标点后小写比对。
+  /// 与 engine.dart 的 _normalizeForMatch 保持一致语义，解决
+  /// 《诡秘之主》与诡秘之主、带尾随空格等不匹配问题。
+  static final _punctRe = RegExp(
+      r"[《》<>「」『』\[\]【】()（）:：,，.。、!！?？;；~～\-—_…·\u0022\u0027`]");
+  static String _normalizeTitle(String s) => s
+      .replaceAll(RegExp(r'[\s　]+'), '')
+      .replaceAll(_punctRe, '')
+      .toLowerCase();
+
   @override
   Widget build(BuildContext context) {
     final filter = ref.watch(searchTypeFilterProvider);
@@ -549,7 +734,10 @@ class _ResultsViewState extends ConsumerState<_ResultsView> {
     }
 
     // 排序
-    if (sortMode == SearchSortMode.type) {
+    if (sortMode == SearchSortMode.relevance) {
+      // 跨源相关性打分：把全局最相关的结果置顶，而非各源第 1 条轮流。
+      flat = _rerankCrossSource(flat, widget.session.keyword);
+    } else if (sortMode == SearchSortMode.type) {
       flat = [...flat]..sort((a, b) => a.type.name.compareTo(b.type.name));
     } else if (sortMode == SearchSortMode.time) {
       flat = [...flat]..sort((a, b) => _dateOf(b).compareTo(_dateOf(a)));
@@ -2186,4 +2374,11 @@ class _AlbumCard extends StatelessWidget {
         color: scheme.surfaceContainerHighest,
         child: Icon(Icons.album, size: 40, color: scheme.outline),
       );
+}
+/// 跨源相关性打分的中间结构：结果 + 分值 + 原始下标
+class _Scored {
+  final SearchResult result;
+  final int score;
+  final int index;
+  _Scored(this.result, this.score, this.index);
 }

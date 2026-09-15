@@ -12,6 +12,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:data/data.dart';
 import 'package:source_engine/source_engine.dart';
 
+import '../providers/agent_service.dart';
 import '../providers/data_providers.dart';
 import '../providers/downloads.dart';
 import '../providers/engine_providers.dart';
@@ -401,6 +402,9 @@ class LanServer extends ChangeNotifier {
 
       case 'logs':
         return _logs(req, res, segs);
+
+      case 'agent':
+        return _agent(req, res, m, segs);
     }
     return _json(res, 404, {'ok': false, 'error': '未找到 ${req.uri.path}'});
   }
@@ -631,6 +635,94 @@ class LanServer extends ChangeNotifier {
     if (!allowApi) return _forbid(res, '开放 API 接口');
     final tasks = _ref.read(downloadsProvider).tasks.map((t) => t.toJson()).toList();
     return _json(res, 200, {'ok': true, 'tasks': tasks});
+  }
+
+  // ---------- Agent 动作（外部 AI / 脚本复用） ----------
+
+  Future<void> _agent(
+      HttpRequest req, HttpResponse res, String m, List<String> segs) async {
+    if (!allowApi) return _forbid(res, '开放 API 接口');
+    final svc = _ref.read(agentServiceProvider);
+    final action = segs.length > 2 ? segs[2] : '';
+
+    switch (action) {
+      case 'recent':
+        if (m == 'GET') {
+          final qp = req.uri.queryParameters;
+          final list = await svc.getRecent(
+            kind: qp['kind'],
+            limit: int.tryParse(qp['limit'] ?? '5') ?? 5,
+          );
+          return _json(res, 200, {
+            'ok': true,
+            'items': list
+                .map((r) => {
+                      'sourceId': r.sourceId,
+                      'sourceName': r.sourceName,
+                      'kind': r.kind,
+                      'title': r.title,
+                      'url': r.url,
+                      'usedAt': r.usedAt.toIso8601String(),
+                    })
+                .toList(),
+          });
+        }
+        break;
+
+      case 'favorites':
+        if (m == 'GET') {
+          final qp = req.uri.queryParameters;
+          final list = await svc.getFavorites(
+            type: qp['type'],
+            limit: int.tryParse(qp['limit'] ?? '10') ?? 10,
+          );
+          return _json(res, 200, {
+            'ok': true,
+            'items': list
+                .map((f) => {
+                      'sourceId': f.sourceId,
+                      'sourceName': f.sourceName,
+                      'type': f.type,
+                      'title': f.title,
+                      'url': f.url,
+                      'createdAt': f.createdAt.toIso8601String(),
+                    })
+                .toList(),
+          });
+        }
+        break;
+
+      case 'open-book':
+        if (m == 'POST') {
+          final body = await _readJson(req);
+          final ok = await svc.openBook(
+            sourceId: (body['sourceId'] as String?) ?? '',
+            sourceName: (body['sourceName'] as String?) ?? '',
+            title: (body['title'] as String?) ?? '',
+            url: (body['url'] as String?) ?? '',
+            extractCode: body['extractCode'] as String?,
+            type: (body['type'] as String?) ?? 'novel',
+          );
+          return _json(res, 200, {'ok': true, 'success': ok});
+        }
+        break;
+
+      case 'play-track':
+        if (m == 'POST') {
+          final body = await _readJson(req);
+          final ok = await svc.playTrack(
+            sourceId: (body['sourceId'] as String?) ?? '',
+            sourceName: (body['sourceName'] as String?) ?? '',
+            title: (body['title'] as String?) ?? '',
+            url: (body['url'] as String?) ?? '',
+            artist: body['artist'] as String?,
+            cover: body['cover'] as String?,
+          );
+          return _json(res, 200, {'ok': true, 'success': ok});
+        }
+        break;
+    }
+    return _json(res, 404, {'ok': false, 'error': '未找到 ${req.uri.path}'});
   }
 
   // ---------- 日志 ----------

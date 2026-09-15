@@ -4,6 +4,7 @@ import 'package:just_audio_background/just_audio_background.dart';
 import 'package:data/data.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'pages/home_shell.dart';
+import 'providers/agent_service.dart';
 import 'providers/builtin_sources.dart';
 import 'providers/engine_providers.dart';
 import 'providers/plugin_store.dart';
@@ -75,6 +76,7 @@ class MyApp extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     return MaterialApp(
       title: '汇搜',
+      navigatorKey: appNavigatorKey,
       theme: AppTheme.light(),
       darkTheme: AppTheme.dark(),
       themeMode: ref.watch(themeModeProvider),

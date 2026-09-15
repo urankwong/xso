@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
 
@@ -225,6 +226,10 @@ class PlayerController {
   /// 返回 null 表示没有可用替代来源。
   Future<QueueItem?> Function(QueueItem failed)? failoverResolver;
 
+  /// 播放历史埋点，由 App 层注入：用户主动点播/加入队列时回调。
+  /// 用于「最近播放」列表与 AI 对话「播放我最近听的歌」。
+  Future<void> Function(QueueItem item)? onTrackPlayed;
+
   /// 正在换源：让 UI 能显示"正在寻找其他来源"，而不是停在失败态发呆
   final ValueNotifier<bool> failingOver = ValueNotifier(false);
 
@@ -417,6 +422,11 @@ class PlayerController {
       final base = queue.value.length;
       queue.value = List.unmodifiable([...queue.value, ...items]);
       await _loadAt(base + startIndex.clamp(0, items.length - 1));
+    }
+    // 主动播放（而非自动切歌）才算"最近听过"，埋点在 playQueue 而非 _loadAt
+    if (startIndex >= 0 && startIndex < items.length) {
+      final cb = onTrackPlayed;
+      if (cb != null) unawaited(cb(items[startIndex]));
     }
   }
 

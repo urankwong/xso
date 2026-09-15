@@ -6,6 +6,7 @@ import '../providers/player_providers.dart';
 import '../providers/downloads.dart';
 import '../providers/ua_provider.dart';
 import '../widgets/update_dialog.dart';
+import 'ai_config_section.dart';
 
 class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key});
@@ -52,6 +53,8 @@ class _SettingsPageState extends State<SettingsPage> {
       appBar: AppBar(title: const Text('设置')),
       body: ListView(
         children: [
+          const AiConfigSection(),
+          const Divider(height: 1),
           // 浏览器标识（UA）：**兜底项**。
           // 绝大多数书源自带 header（含站点专用 UA/Cookie），会优先生效；
           // 这里只影响"源没带 header"的请求。默认桌面浏览器即可覆盖大多数

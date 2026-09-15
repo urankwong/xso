@@ -5,6 +5,7 @@ import 'package:data/data.dart';
 import '../main.dart' show homeTabIndexProvider;
 import '../providers/data_providers.dart';
 import '../providers/search_providers.dart';
+import 'ai_chat_page.dart';
 import 'source_manage_page.dart';
 
 /// 首页·发现：内容宫格 + 源状态 + 最近搜索
@@ -51,11 +52,25 @@ class HomePage extends ConsumerWidget {
         child: ListView(
           padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
           children: [
-            // 顶部大标题
+            // 顶部大标题 + AI 助手入口
             Padding(
               padding: const EdgeInsets.symmetric(vertical: 12),
-              child:
-                  Text('发现', style: Theme.of(context).textTheme.headlineMedium),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text('发现',
+                      style: Theme.of(context).textTheme.headlineMedium),
+                  IconButton(
+                    icon: const Icon(Icons.smart_toy_outlined),
+                    tooltip: 'AI 助手',
+                    onPressed: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                          builder: (_) => const AiChatPage()),
+                    ),
+                  ),
+                ],
+              ),
             ),
             // 内容入口宫格：列数随屏宽自适应，宽屏（平板/横屏）下不再 3 列失衡
             LayoutBuilder(builder: (context, constraints) {

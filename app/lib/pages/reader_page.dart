@@ -8,6 +8,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:source_engine/source_engine.dart';
 
 import '../providers/content_filter_provider.dart';
+import '../providers/data_providers.dart';
 import '../providers/engine_providers.dart';
 import '../providers/reader_content.dart';
 import '../providers/tts/tts_controller.dart';
@@ -147,9 +148,27 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
       start = _prefs?.getInt('$_kPosPrefix${widget.progressKey}') ?? 0;
     }
     if (start < 0 || start >= widget.chapters.length) start = 0;
+    unawaited(_touchRecent());
     if (!mounted) return;
     setState(() {});
     await _load(start);
+  }
+
+  /// 记录「最近阅读」：进入阅读器时写一条（书+源+时间），供
+  /// 最近阅读列表与 AI 对话「打开我最近读的书」查询。失败忽略。
+  Future<void> _touchRecent() async {
+    try {
+      final meta = widget.source.meta;
+      await ref.read(appDbProvider).recentDao.record(
+            sourceId: meta.id,
+            sourceName: meta.name,
+            kind: 'read',
+            title: widget.bookTitle,
+            url: widget.progressKey,
+          );
+    } catch (_) {
+      // 埋点失败不影响阅读
+    }
   }
 
   Future<void> _load(int i) async {
