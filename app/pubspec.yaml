@@ -1,7 +1,7 @@
 name: app
 description: 聚合搜索 App 壳
 publish_to: none
-version: 0.2.0+12
+version: 0.2.0+13
 environment:
   sdk: ^3.5.0
 dependencies:
@@ -43,6 +43,13 @@ dependencies:
   # 听书：Edge TTS（联网，微软神经网络语音，免费无需 key）+ 系统 TTS（离线备用）
   edge_tts: ^0.1.5
   flutter_tts: ^4.2.5
+dependency_overrides:
+  # objective_c 9.6.1 的 hook/build.dart 用了 Architecture.arm64e，
+  # 需要更新版 native_toolchain_c 才有该成员，否则 kernel 编译失败
+  # （2026-09-15 构建 "Member not found: 'arm64e'" 实测踩坑）。
+  # 锁回 9.6.0（本机缓存已有，此前构建成功用的就是它）；
+  # 待 native_toolchain_c 解析到带 arm64e 的版本后可移除此覆盖。
+  objective_c: 9.6.0
 dev_dependencies:
   flutter_test:
     sdk: flutter
