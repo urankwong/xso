@@ -33,7 +33,7 @@ jobs:
       - name: 拉取内置源(只读凭据)
         uses: actions/checkout@v4
         with:
-          repository: urankwong/xso-sources
+          repository: ${{ secrets.SOURCES_REPO }}
           ssh-key: ${{ secrets.SOURCES_SSH_KEY }}
           ref: main
           path: app/assets/sources
@@ -43,6 +43,16 @@ jobs:
           n=$(ls app/assets/sources | wc -l)
           echo "app/assets/sources 文件数: $n"
           test "$n" -gt 100 || { echo "内置源未拉取成功"; exit 1; }
+
+      - name: 生成内置源索引(不入库公开仓)
+        # 依据实际拉取到的文件动态生成清单索引，供 builtin_sources.dart 运行时枚举；
+        # 内置站点清单因此不出现在公开源码里。_index.json 随 gitignore 的
+        # assets/sources 目录一起打包进 APK。
+        run: |
+          cd app/assets/sources
+          find . -maxdepth 1 -type f ! -name '_index.json' -printf '%f\n' \
+            | sort | jq -R . | jq -s '{files:.}' > _index.json
+          echo "索引条数: $(jq '.files|length' _index.json)"
 
       - name: 安装 JDK
         uses: actions/setup-java@v4

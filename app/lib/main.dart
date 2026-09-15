@@ -44,7 +44,7 @@ Future<void> _ensureBuiltinSources(ProviderContainer container) async {
   const kIds = 'builtin_sources_ids';
   try {
     final prefs = await SharedPreferences.getInstance();
-    final sig = BuiltinSources.manifestSignature();
+    final sig = await BuiltinSources.manifestSignature();
     if (prefs.getString(kSig) == sig) return; // 清单没变，无需处理
     final repoPath = await container.read(sourceRepositoryPathProvider.future);
     final repo = SourceRepository(repoPath);

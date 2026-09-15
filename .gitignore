@@ -48,6 +48,8 @@ packages/*/tool/
 # 内置源内容(含站点域名/规则/JS)——真实源存放于独立私有仓,
 # 仅 CI 构建时拉入, 本地保留未跟踪副本, 不进公开仓
 app/assets/sources/
+# 内置源生成器脚本: 内含全部站点 URL/规则, 与内置源同属私有内容, 移出公开仓(本地保留)
+tools/generate_builtin_sources.py
 
 # 代码索引工具产物 / 调试临时文件
 .codegraph/
