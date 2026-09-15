@@ -55,8 +55,8 @@ ci_run.json
 head.bin
 nul
 
-# 敏感调研文档(含后端地址) / 调试脚本 / 临时截图抓取, 不进公开仓
-docs/QingMusic源码调研报告.md
+# 开发附属文档(内部方案/报告, 含站点与后端线索) / 调试脚本 / 临时截图抓取, 不进公开仓
+docs/
 app/tool/
 _s*.png
 _vc.txt
