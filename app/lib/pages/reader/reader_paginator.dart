@@ -35,18 +35,49 @@ class ReaderPaginator {
     required double maxWidth,
     required double maxHeight,
     required TextStyle style,
+    /// 首段判定为章节标题时使用的样式。
+    ///
+    /// 必须传：标题的渲染样式与正文不同（字号更大、上下有留白），
+    /// 若测量时仍按正文样式算高度，实际渲染就会比测量值高，
+    /// 直接违反本类顶部那条"测量与渲染必须一致"的约束，导致页尾溢出。
+    TextStyle? headingStyle,
+    /// 判定首段是否为章节标题（由调用方提供，分页器不关心书的目录结构）
+    bool Function(String paragraph)? isHeading,
+    /// 标题渲染时额外占用的上下留白总高度。
+    ///
+    /// 渲染端给标题套了 Padding（居中标题需要呼吸感），这段高度**不在
+    /// TextPainter 的测量结果里** —— 不计入就一定会溢出（实测 18px 的
+    /// 留白直接把首页顶出 39px）。
+    double headingSpacing = 0,
     TextDirection textDirection = TextDirection.ltr,
   }) {
     final paragraphs = splitParagraphs(content);
     final pages = <ReaderPageContent>[];
+
+    // 首段是否按标题排版：三条都成立才算（调用方给了标题样式与判定函数，
+    // 且判定函数认可首段）。不成立时行为与改造前完全一致。
+    final firstIsHeading = headingStyle != null &&
+        isHeading != null &&
+        paragraphs.isNotEmpty &&
+        isHeading(paragraphs[0]);
+    // 用可空的中间变量，避免 Dart 在闭包里跨变量推断造成的 `!` 告警
+    final heading = firstIsHeading ? headingStyle : null;
+    TextStyle styleAt(int pi) => (pi == 0 && heading != null) ? heading : style;
+
     if (paragraphs.isEmpty || maxWidth <= 0 || maxHeight <= 0) {
       return [
-        [for (var i = 0; i < paragraphs.length; i++) ReaderPageFragment(i, indent + paragraphs[i])]
+        [
+          for (var i = 0; i < paragraphs.length; i++)
+            ReaderPageFragment(
+                i, (i == 0 && firstIsHeading) ? paragraphs[i] : indent + paragraphs[i])
+        ]
       ];
     }
 
     var currentPage = <ReaderPageFragment>[];
     var remaining = maxHeight;
+    // 首页含标题时，先把标题的上下留白从预算里扣掉
+    if (firstIsHeading && headingSpacing > 0) remaining -= headingSpacing;
 
     void flush() {
       if (currentPage.isNotEmpty) pages.add(currentPage);
@@ -54,9 +85,9 @@ class ReaderPaginator {
       remaining = maxHeight;
     }
 
-    double heightOf(String text) {
+    double heightOf(String text, TextStyle st) {
       final tp = TextPainter(
-        text: TextSpan(text: text, style: style),
+        text: TextSpan(text: text, style: st),
         textDirection: textDirection,
       )..layout(maxWidth: maxWidth);
       final h = tp.height;
@@ -65,14 +96,14 @@ class ReaderPaginator {
     }
 
     /// 二分求"高度不超过 budget 的最大前缀长度"
-    int fitLength(String text, double budget) {
+    int fitLength(String text, double budget, TextStyle st) {
       // 快速出口：全段放得下
-      if (heightOf(text) <= budget) return text.length;
+      if (heightOf(text, st) <= budget) return text.length;
       var lo = 0;
       var hi = text.length;
       while (lo < hi) {
         final mid = (lo + hi + 1) >> 1;
-        if (heightOf(text.substring(0, mid)) <= budget) {
+        if (heightOf(text.substring(0, mid), st) <= budget) {
           lo = mid;
         } else {
           hi = mid - 1;
@@ -86,16 +117,18 @@ class ReaderPaginator {
     }
 
     for (var pi = 0; pi < paragraphs.length; pi++) {
-      var rest = indent + paragraphs[pi];
+      final st = styleAt(pi);
+      // 标题不加段首缩进（渲染端是居中显示，缩进只会造成测量/渲染不一致）
+      var rest = (pi == 0 && firstIsHeading) ? paragraphs[pi] : indent + paragraphs[pi];
       while (rest.isNotEmpty) {
-        final len = fitLength(rest, remaining);
+        final len = fitLength(rest, remaining, st);
         if (len <= 0) {
           // 当前页连一个字符都放不下 → 换页
           flush();
           continue;
         }
         currentPage.add(ReaderPageFragment(pi, rest.substring(0, len)));
-        remaining -= heightOf(rest.substring(0, len));
+        remaining -= heightOf(rest.substring(0, len), st);
         rest = rest.substring(len);
         if (rest.isNotEmpty && remaining <= 0) flush();
       }

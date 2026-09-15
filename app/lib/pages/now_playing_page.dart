@@ -195,6 +195,18 @@ class _NowPlayingPageState extends ConsumerState<NowPlayingPage> {
     return null;
   }
 
+  /// 解析指定音质的播放地址：优先 extra 预存，否则回源 resolveMedia(quality)
+  Future<String> _resolveQualityUrl(TrackInfo tk, String qualityId) async {
+    if (tk.sourceId.isEmpty) return tk.url;
+    try {
+      final assembler = await ref.read(sourceAssemblerProvider.future);
+      return await assembler.resolveMedia(
+          tk.sourceId, tk.toSearchResult(), quality: qualityId);
+    } catch (_) {
+      return tk.url;
+    }
+  }
+
   Future<void> _showQualitySheet(TrackInfo tk) async {
     final qualities = parseQualities(tk.extra);
     final player = ref.read(playerProvider);
@@ -223,28 +235,37 @@ class _NowPlayingPageState extends ConsumerState<NowPlayingPage> {
               ),
             for (final q in qualities)
               () {
-                final url = _qualityUrl(tk.extra, q.id);
+                final cachedUrl = _qualityUrl(tk.extra, q.id);
                 return ListTile(
                   leading: const Icon(Icons.high_quality),
                   title: Text(q.name),
-                  subtitle: Text(url != null ? '可在线播放' : '需下载后收听',
+                  subtitle: Text(
+                      cachedUrl != null ? '可在线播放' : '点击切换音质',
                       style: const TextStyle(fontSize: 12)),
                   trailing: IconButton(
                     icon: const Icon(Icons.download_outlined),
                     tooltip: '下载',
-                    onPressed: () => _download(sheetCtx, url ?? tk.url, q.name),
+                    onPressed: () async {
+                      Navigator.pop(sheetCtx);
+                      final url =
+                          cachedUrl ?? await _resolveQualityUrl(tk, q.id);
+                      _download(context, url, q.name);
+                    },
                   ),
-                  onTap: () {
+                  onTap: () async {
                     Navigator.pop(sheetCtx);
-                    if (url != null) {
+                    final url =
+                        cachedUrl ?? await _resolveQualityUrl(tk, q.id);
+                    if (url.startsWith('http')) {
                       player.switchCurrentUrl(url);
-                    }
-                    if (mounted) {
+                      if (mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(content: Text('已切换至${q.name}')),
+                        );
+                      }
+                    } else if (mounted) {
                       ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                            content: Text(url != null
-                                ? '已切换至${q.name}'
-                                : '该音质需下载后收听')),
+                        SnackBar(content: Text('无法获取${q.name}地址')),
                       );
                     }
                   },

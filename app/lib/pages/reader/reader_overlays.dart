@@ -166,8 +166,17 @@ class _ReaderMenuOverlayState extends State<ReaderMenuOverlay> {
         ),
       );
 
-  String get _chapterLabel =>
-      '${widget.chapterIndex + 1}/${widget.chapterCount}章';
+  /// 章节序号 / 总数 **+ 全书进度百分比**。
+  ///
+  /// 主流阅读软件都会给出"这本书读了多少"的直观感受，
+  /// 只有章节序号（如 40/112）用户还得自己心算进度。
+  String get _chapterLabel {
+    final total = widget.chapterCount;
+    if (total <= 0) return '0/0章';
+    final percent =
+        ((widget.chapterIndex + 1) / total * 100).clamp(0.0, 100.0);
+    return '${widget.chapterIndex + 1}/$total章 · ${percent.toStringAsFixed(1)}%';
+  }
 
   Widget _barButton(IconData icon, String label, VoidCallback? onTap) =>
       InkWell(

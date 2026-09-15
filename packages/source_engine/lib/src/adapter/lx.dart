@@ -244,6 +244,33 @@ class LxSource implements SearchableSource {
   /// 宿主搜索器已覆盖的平台（与 lx_host_search.dart 的 `__lxHostSearch` 对齐）
   static const _hostPlatforms = {'kg', 'kw', 'tx', 'wy', 'mg'};
 
+  /// 平台 → 展示名（供虚拟子源装配用）
+  static const _platformLabels = {
+    'kg': '酷狗', 'kw': '酷我', 'tx': 'QQ', 'wy': '网易云', 'mg': '咪咕',
+  };
+
+  /// 平台展示名
+  static String platformLabel(String platform) =>
+      _platformLabels[platform] ?? platform;
+
+  /// 源声明的平台列表（供虚拟子源装配用）
+  Future<List<String>> platforms() => _sourcePlatforms();
+
+  /// 按单个平台搜索（供虚拟子源调用）。
+  /// 重试一次以应对间歇性抖动，仍失败返回空（不抛异常，不阻塞其他平台）。
+  Future<List<SearchResult>> searchByPlatform(
+      String platform, SearchQuery query) async {
+    if (!_hostPlatforms.contains(platform)) return const [];
+    for (var attempt = 0; attempt < 2; attempt++) {
+      try {
+        return await _hostSearch(platform, query.keyword, query.page);
+      } catch (_) {
+        if (attempt == 1) return const [];
+      }
+    }
+    return const [];
+  }
+
   @override
   Future<List<SearchResult>> search(SearchQuery query) async {
     // ① 优先问源自身：兼容实现了 search / musicSearch 动作的扩展源
@@ -488,6 +515,104 @@ class LxSource implements SearchableSource {
     } catch (_) {
       return null; // 无歌词不阻塞播放
     }
+  }
+
+  /// 专辑搜索：遍历源声明的平台，用宿主专辑搜索器搜出专辑条目。
+  /// 返回的 SearchResult 带 needsDetail=true，extra 含 albumId/lxSource 供 albumTracks 用。
+  Future<List<SearchResult>> searchAlbums(String keyword) async {
+    final platforms = await _sourcePlatforms();
+    final out = <SearchResult>[];
+    for (final p in platforms) {
+      if (!_hostPlatforms.contains(p)) continue;
+      for (var attempt = 0; attempt < 2; attempt++) {
+        try {
+          out.addAll(await _hostAlbumSearch(p, keyword, 1));
+          break;
+        } catch (_) {
+          if (attempt == 1) break;
+        }
+      }
+    }
+    return out;
+  }
+
+  Future<List<SearchResult>> _hostAlbumSearch(
+      String platform, String keyword, int page) async {
+    await _js.evaluate(
+      '__lxAlbumSearchStart(${jsonEncode(platform)}, ${jsonEncode(keyword)}, $page, 30)',
+      timeout: const Duration(seconds: 15),
+    );
+    final raw = await _pollAlbumSearch();
+    final decoded = jsonDecode(raw);
+    if (decoded is Map && decoded['__error'] != null) {
+      throw Exception('专辑搜索失败: ${decoded['__error']}');
+    }
+    final list = decoded is Map ? decoded['list'] as List? : null;
+    return (list ?? []).whereType<Map>().map(_toAlbumResult).toList();
+  }
+
+  /// 专辑条目 → SearchResult（needsDetail=true，点击进 AlbumPage 拉曲目）
+  SearchResult _toAlbumResult(Map m) {
+    return SearchResult(
+      sourceId: meta.id,
+      sourceName: meta.name,
+      type: SourceType.music,
+      title: (m['albumName'] ?? m['name'])?.toString() ?? '(未知专辑)',
+      url: '',
+      needsDetail: true,
+      extra: {
+        if (m['singer'] != null) 'artist': m['singer'].toString(),
+        if (m['img'] != null) 'cover': m['img'].toString(),
+        'album': (m['albumName'] ?? m['name'])?.toString() ?? '',
+        if (m['albumId'] != null) 'albumId': m['albumId'].toString(),
+        if (m['source'] != null) 'lxSource': m['source'].toString(),
+        if (m['songCount'] != null) 'songCount': m['songCount'].toString(),
+      },
+    );
+  }
+
+  /// 专辑曲目：从 album.extra 取平台+albumId，调宿主专辑曲目获取器。
+  Future<List<SearchResult>> albumTracks(SearchResult album) async {
+    final platform = album.extra?['lxSource'];
+    final albumId = album.extra?['albumId'];
+    if (platform == null || albumId == null) {
+      throw Exception('专辑条目缺少 lxSource/albumId');
+    }
+    await _js.evaluate(
+      '__lxAlbumTracksStart(${jsonEncode(platform)}, ${jsonEncode(albumId)})',
+      timeout: const Duration(seconds: 15),
+    );
+    final raw = await _pollAlbumTracks();
+    final decoded = jsonDecode(raw);
+    if (decoded is Map && decoded['__error'] != null) {
+      throw Exception('专辑曲目失败: ${decoded['__error']}');
+    }
+    final list = decoded is Map ? decoded['list'] as List? : null;
+    return (list ?? []).whereType<Map>().map(_toSearchResult).toList();
+  }
+
+  Future<String> _pollAlbumSearch(
+      {Duration interval = const Duration(milliseconds: 150),
+      int maxTries = 80}) async {
+    for (var i = 0; i < maxTries; i++) {
+      await Future<void>.delayed(interval);
+      final raw = await _js.evaluate('__lxAlbumSearchTake()',
+          timeout: const Duration(seconds: 5));
+      if (raw != '__pending__') return raw;
+    }
+    throw Exception('专辑搜索超时');
+  }
+
+  Future<String> _pollAlbumTracks(
+      {Duration interval = const Duration(milliseconds: 150),
+      int maxTries = 80}) async {
+    for (var i = 0; i < maxTries; i++) {
+      await Future<void>.delayed(interval);
+      final raw = await _js.evaluate('__lxAlbumTracksTake()',
+          timeout: const Duration(seconds: 5));
+      if (raw != '__pending__') return raw;
+    }
+    throw Exception('专辑曲目获取超时');
   }
 
   Future<String> _pollInvoke(String id,

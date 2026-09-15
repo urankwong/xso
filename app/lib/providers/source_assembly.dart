@@ -58,8 +58,16 @@ class SourceAssembler {
     for (final s in stored.where((e) => e.enabled)) {
       // JS 源懒装配：此处不起 QuickJS，首次搜索时才包装该源。
       // 否则 26 个 JS 源要串行装完才出第一条结果，首搜极慢。
-      if (s.format == 'musicfree' || s.format == 'lx') {
+      if (s.format == 'musicfree') {
         result.add(_LazyJsSource(this, s));
+        continue;
+      }
+      if (s.format == 'lx') {
+        // 洛雪源：按平台拆分为虚拟子源，每个平台独立显示搜索状态/健康条。
+        // 取链/歌词仍通过仓库 id 共享同一个 LxSource 实例（同一 JS runtime）。
+        for (final platform in const ['kg', 'kw', 'tx', 'wy', 'mg']) {
+          result.add(_LazyLxPlatformSource(this, s, platform));
+        }
         continue;
       }
       final raw = await repo.readRaw(s.id);
@@ -176,19 +184,31 @@ class SourceAssembler {
     return (inline == null || inline.isEmpty) ? null : inline;
   }
 
-  /// 取已装配的洛热源；懒装配下若尚未包装则按仓库记录即时装配一次
+  /// 取已装配的洛雪源；懒装配下若尚未包装则按仓库记录即时装配一次。
+  ///
+  /// 虚拟子源的 sourceId 格式为 "仓库id::平台"（如 `builtin.lx_qingmusic_js::kg`），
+  /// 此处取 `::` 前的基础 id 查原始 LxSource 实例。
   Future<LxSource?> _lxOf(String sourceId) async {
-    final cached = _lxSources[sourceId];
+    final baseId = sourceId.split('::').first;
+    final cached = _lxSources[baseId];
     if (cached != null) return cached;
     final stored = await SourceRepository(repoPath).list();
     final s = stored.firstWhere(
-      (e) => e.id == sourceId && e.enabled && e.format == 'lx',
+      (e) => e.id == baseId && e.enabled && e.format == 'lx',
       orElse: () => const StoredSource(
           id: '', format: '', name: '', type: '', enabled: false, file: ''),
     );
     if (s.id.isEmpty) return null;
     await wrapJsSource(s);
-    return _lxSources[sourceId];
+    return _lxSources[baseId];
+  }
+
+  /// 装配洛雪源并返回 LxSource 实例（供虚拟子源共享同一 JS runtime）
+  Future<LxSource> wrapLxSource(StoredSource s) async {
+    final cached = _lxSources[s.id];
+    if (cached != null) return cached;
+    await wrapJsSource(s);
+    return _lxSources[s.id]!;
   }
 
   /// 该源是否支持专辑检索（MusicFree 插件实现 search type='album' + getAlbumInfo）
@@ -210,8 +230,10 @@ class SourceAssembler {
     return _musicFreeSources[sourceId];
   }
 
-  /// 按专辑名搜专辑条目（结果带 __item，可直接喂给 albumTracks）
+  /// 按专辑名搜专辑条目（结果带 __item 或 __lxItem，可直接喂给 albumTracks）
   Future<List<SearchResult>> searchAlbums(String sourceId, String albumName) async {
+    final lx = await _lxOf(sourceId);
+    if (lx != null) return lx.searchAlbums(albumName);
     final mf = await _mfOf(sourceId);
     if (mf == null) throw Exception('该源不支持专辑检索');
     return mf.searchAlbums(albumName);
@@ -219,6 +241,8 @@ class SourceAssembler {
 
   /// 拉取指定专辑的曲目列表
   Future<List<SearchResult>> albumTracks(String sourceId, SearchResult album) async {
+    final lx = await _lxOf(sourceId);
+    if (lx != null) return lx.albumTracks(album);
     final mf = await _mfOf(sourceId);
     if (mf == null) throw Exception('该源不支持专辑曲目');
     return mf.fetchAlbumTracks(album);
@@ -272,6 +296,47 @@ class _LazyJsSource implements SearchableSource {
     final results = await inner.search(query);
     // 归一归属：插件内部 id 与仓库 id 不同，统一按仓库源标注，
     // 以便两段式详情/播放地址解析按同一 id 找到该源。
+    return [
+      for (final r in results)
+        SearchResult(
+          sourceId: meta.id,
+          sourceName: meta.name,
+          type: r.type,
+          title: r.title,
+          url: r.url,
+          extractCode: r.extractCode,
+          extra: r.extra,
+          needsDetail: r.needsDetail,
+        )
+    ];
+  }
+}
+/// 洛雪源按平台拆分的虚拟子源：每个平台独立搜索、独立显示健康状态。
+/// 取链/歌词仍委托给原始 LxSource 实例（通过仓库 id 共享同一个 JS runtime）。
+class _LazyLxPlatformSource implements SearchableSource {
+  final SourceAssembler _owner;
+  final StoredSource _stored;
+  final String _platform;
+  LxSource? _lx;
+  Future<LxSource>? _wrapping;
+
+  _LazyLxPlatformSource(this._owner, this._stored, this._platform);
+
+  @override
+  SourceMeta get meta => SourceMeta(
+        id: '${_stored.id}::$_platform',
+        name: '${_stored.name}·${LxSource.platformLabel(_platform)}',
+        type: SourceType.music,
+        version: 1,
+        origin: 'lx',
+      );
+
+  @override
+  Future<List<SearchResult>> search(SearchQuery query) async {
+    final lx = _lx ??= await (_wrapping ??= _owner.wrapLxSource(_stored));
+    final results = await lx.searchByPlatform(_platform, query);
+    // 归一归属：结果的 sourceId/sourceName 改为虚拟子源的，
+    // 以便健康条/来源筛选按平台分组
     return [
       for (final r in results)
         SearchResult(

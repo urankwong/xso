@@ -40,8 +40,21 @@ class TtsController extends ChangeNotifier {
 
   EdgeTtsEngine? _edgeEngine;
   SystemTtsEngine? _systemEngine;
-  TtsEngine get _engine =>
-      _engineKind == TtsEngineKind.edge ? _edgeEngine! : _systemEngine!;
+
+  /// 初始化失败过的引擎（不代表不能重试，仅用于给出更准确的提示）
+  final Set<TtsEngineKind> _engineFailed = {};
+
+  /// 取当前引擎。不可用时抛可读异常 —— 调用方（start）统一捕获并转成
+  /// 用户能看懂的提示，而不是让 `!` 抛出 NPE 式的空断言崩溃。
+  TtsEngine get _engine {
+    final e = _engineKind == TtsEngineKind.edge ? _edgeEngine : _systemEngine;
+    if (e == null) {
+      throw StateError(_engineKind == TtsEngineKind.edge
+          ? '联网语音引擎不可用'
+          : '系统离线语音引擎不可用');
+    }
+    return e;
+  }
 
   List<Chapter>? _chapters;
   ChapterContentRepository? _repo;
@@ -88,14 +101,34 @@ class TtsController extends ChangeNotifier {
     _safeNotify();
   }
 
+  /// 初始化两个引擎。
+  ///
+  /// **任一引擎初始化失败都不能连坐另一个**：系统 TTS 在没装语音数据的
+  /// 设备上会抛异常，而它挂在 start() 的必经路径上 —— 原来没有 try/catch，
+  /// 结果就是联网引擎明明可用、整个听书却直接卡住（状态停在 loading，
+  /// 面板上点任何按钮都无响应）。
   Future<void> _ensureEngines() async {
-    if (_edgeEngine == null) {
-      _edgeEngine = EdgeTtsEngine();
-      await _edgeEngine!.init();
+    if (_edgeEngine == null && !_engineFailed.contains(TtsEngineKind.edge)) {
+      try {
+        final e = EdgeTtsEngine();
+        await e.init();
+        _edgeEngine = e;
+      } catch (err) {
+        _edgeEngine = null;
+        _engineFailed.add(TtsEngineKind.edge);
+        debugPrint('[TTS] Edge 引擎初始化失败: $err');
+      }
     }
-    if (_systemEngine == null) {
-      _systemEngine = SystemTtsEngine();
-      await _systemEngine!.init();
+    if (_systemEngine == null && !_engineFailed.contains(TtsEngineKind.system)) {
+      try {
+        final e = SystemTtsEngine();
+        await e.init();
+        _systemEngine = e;
+      } catch (err) {
+        _systemEngine = null;
+        _engineFailed.add(TtsEngineKind.system);
+        debugPrint('[TTS] 系统语音引擎初始化失败: $err');
+      }
     }
   }
 
@@ -118,25 +151,73 @@ class TtsController extends ChangeNotifier {
     _repo = repo;
     _progressKey = progressKey;
     _error = null;
-    await _ensureEngines();
-    await _engine.stop();
+    // 整体兜底：start 里的每一步（引擎初始化、抓正文、首段合成）都可能抛。
+    // 不捕获的话异常会逃到 UI 层，而状态停留在 loading/idle —— 用户看到
+    // 面板却按什么都没反应（实测模拟器上正是这个表现）。
+    try {
+      await _ensureEngines();
+      await _engine.stop();
 
-    final p = await SharedPreferences.getInstance();
-    var idx = startIndex;
-    if (startIndex < 0) {
-      idx = p.getInt('$_kPosPrefix$progressKey') ?? 0;
+      final p = await SharedPreferences.getInstance();
+      var idx = startIndex;
+      if (startIndex < 0) {
+        idx = p.getInt('$_kPosPrefix$progressKey') ?? 0;
+      }
+      if (chapters.isEmpty) {
+        _status = TtsStatus.error;
+        _error = '该源没有可用目录，无法听书';
+        _safeNotify();
+        return;
+      }
+      idx = idx.clamp(0, chapters.length - 1);
+
+      _status = TtsStatus.loading;
+      _safeNotify();
+
+      await _loadChapter(idx);
+      if (_status == TtsStatus.error) return;
+      _segmentIndex = 0;
+      _status = TtsStatus.playing;
+      _safeNotify();
+      _playCurrent();
+    } catch (e) {
+      _status = TtsStatus.error;
+      _error = _friendlyError(e);
+      _safeNotify();
+      debugPrint('[TTS] start 失败: $e');
     }
-    idx = idx.clamp(0, chapters.length - 1);
+  }
 
-    _status = TtsStatus.loading;
-    _safeNotify();
+  /// 面板已打开但处于 idle（未开始）或 error（失败）时，用户再点播放。
+  ///
+  /// 复用上次的章节/仓库/进度键重启 —— 音频条自身没有这些参数，
+  /// 只能由控制器自己记住。
+  Future<void> restart() async {
+    final chapters = _chapters;
+    final repo = _repo;
+    if (chapters == null || repo == null) return;
+    await start(
+      chapters: chapters,
+      repo: repo,
+      progressKey: _progressKey,
+      startIndex: _chapterIndex,
+    );
+  }
 
-    await _loadChapter(idx);
-    if (_status == TtsStatus.error) return;
-    _segmentIndex = 0;
-    _status = TtsStatus.playing;
-    _safeNotify();
-    _playCurrent();
+  /// 把底层异常翻译成用户能看懂的话，并给出可执行的下一步。
+  String _friendlyError(Object e) {
+    final s = e.toString();
+    if (s.contains('SocketException') ||
+        s.contains('HandshakeException') ||
+        s.contains('Connection') ||
+        s.contains('TimeoutException') ||
+        s.contains('网络')) {
+      return '联网语音合成失败（网络不可达），可在上方切换到「系统离线」再试';
+    }
+    if (s.contains('引擎不可用')) {
+      return '当前语音引擎不可用，请切换到另一个引擎';
+    }
+    return s.replaceFirst('Exception: ', '').replaceFirst('StateError: ', '');
   }
 
   Future<void> pause() async {

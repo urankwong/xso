@@ -14,7 +14,7 @@ void main() {
 
   SourceEngine buildEngine() => SourceEngine(
         jsRuntime: js,
-        fetcher: (url, {method = 'GET', headers = const {}, charset = 'utf-8'}) async =>
+        fetcher: (url, {method = 'GET', headers = const {}, charset = 'utf-8', String? body}) async =>
             responses[url] ?? (throw Exception('network down')),
       );
 
@@ -90,7 +90,7 @@ void main() {
     final engine2 = SourceEngine(
       jsRuntime: jsWithParse,
       fetcher: (url,
-              {method = 'GET', headers = const {}, charset = 'utf-8'}) async =>
+              {method = 'GET', headers = const {}, charset = 'utf-8', String? body}) async =>
           '<html>raw</html>',
     );
     final results = await engine2.search(source, SearchQuery(keyword: 'k'));

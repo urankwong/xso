@@ -31,16 +31,40 @@ Future<void> downloadMusic(BuildContext context, WidgetRef ref,
   var target = url;
   // 同播放：插件来源即使带 url 也要重新解析，否则会下载到无效内容
   final fromPlugin = (result?.extra?['__item'] ?? '').isNotEmpty;
-  if ((fromPlugin || !target.startsWith('http')) &&
+  final qualities = parseQualities(extra);
+  // 先选音质（弹面板或用默认），再按所选音质解析地址
+  String? label;
+  String qualityId = 'standard';
+  if (await downloadConfirmEnabled()) {
+    label = await showDownloadConfirm(
+      context,
+      kind: kind,
+      title: title,
+      artist: artist,
+      qualities: qualities,
+    );
+    if (label == null) return; // 用户取消
+    if (!context.mounted) return;
+    final match = qualities.where((q) => q.name == label).firstOrNull;
+    if (match != null) qualityId = match.id;
+  } else {
+    label = qualities.isEmpty ? '默认音质' : qualities.first.name;
+    if (qualities.isNotEmpty) qualityId = qualities.first.id;
+  }
+  // 用所选音质解析地址：插件源/无直链/非默认音质 都需要重新 resolveMedia
+  final needResolve = (fromPlugin ||
+          !target.startsWith('http') ||
+          qualityId != 'standard') &&
       sourceId != null &&
-      result != null) {
+      result != null;
+  if (needResolve) {
     if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('正在解析下载地址…')));
     }
     try {
       final assembler = await ref.read(sourceAssemblerProvider.future);
-      target = await assembler.resolveMedia(sourceId, result);
+      target = await assembler.resolveMedia(sourceId, result, quality: qualityId);
     } catch (e) {
       if (context.mounted) {
         ScaffoldMessenger.of(context)
@@ -58,23 +82,6 @@ Future<void> downloadMusic(BuildContext context, WidgetRef ref,
   }
   // 解析地址可能经过了 await，用前先确认 context 仍然有效
   if (!context.mounted) return;
-  final qualities = parseQualities(extra);
-  // 下载前确认：无论音质档数都先弹统一确认面板（可在设置里关闭）。
-  // 原实现只有 qualities.length>1 才弹，0/1 档源直接入队 → 用户感知为「秒下、无确认」。
-  String? label;
-  if (await downloadConfirmEnabled()) {
-    label = await showDownloadConfirm(
-      context,
-      kind: kind,
-      title: title,
-      artist: artist,
-      qualities: qualities,
-    );
-    if (label == null) return; // 用户取消
-    if (!context.mounted) return;
-  } else {
-    label = qualities.isEmpty ? '默认音质' : qualities.first.name;
-  }
   final added = await ref.read(downloadsProvider).enqueue(
         url: target,
         title: title,
@@ -218,6 +225,7 @@ class SearchPage extends ConsumerStatefulWidget {
 class _SearchPageState extends ConsumerState<SearchPage> {
   final _controller = TextEditingController();
   bool _hasText = false;
+  bool _albumMode = false;
 
   @override
   void initState() {
@@ -257,8 +265,10 @@ class _SearchPageState extends ConsumerState<SearchPage> {
   @override
   Widget build(BuildContext context) {
     final session = ref.watch(searchSessionProvider);
+    final filter = ref.watch(searchTypeFilterProvider);
     final hasSources =
         ref.watch(searchableSourcesProvider).value?.isNotEmpty == true;
+    final showAlbumToggle = filter == SourceType.music && session != null;
 
     return Scaffold(
       appBar: AppBar(
@@ -294,14 +304,38 @@ class _SearchPageState extends ConsumerState<SearchPage> {
       body: Column(
         children: [
           _TypeChips(),
+          if (showAlbumToggle)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 2),
+              child: Row(
+                children: [
+                  _SegTab(
+                    label: '歌曲',
+                    selected: !_albumMode,
+                    onTap: () => setState(() => _albumMode = false),
+                  ),
+                  const SizedBox(width: 8),
+                  _SegTab(
+                    label: '专辑',
+                    selected: _albumMode,
+                    onTap: () => setState(() => _albumMode = true),
+                  ),
+                ],
+              ),
+            ),
           Expanded(
             child: session == null
                 ? _EmptyState(hasSources: hasSources, onGoSources: _goSources)
-                : _ResultsView(
-                    session: session,
-                    onRetry: _submit,
-                    onGoSources: _goSources,
-                  ),
+                : _albumMode && showAlbumToggle
+                    ? _AlbumSearchResults(
+                        session: session,
+                        keyword: _controller.text,
+                      )
+                    : _ResultsView(
+                        session: session,
+                        onRetry: _submit,
+                        onGoSources: _goSources,
+                      ),
           ),
         ],
       ),
@@ -1169,7 +1203,8 @@ class _ResultTile extends ConsumerWidget {
           content: Text('正在解析播放地址…'), duration: Duration(seconds: 2)));
       try {
         final assembler = await container.read(sourceAssemblerProvider.future);
-        url = await assembler.resolveMedia(result.sourceId, result);
+        url = await assembler.resolveMedia(result.sourceId, result,
+            quality: await defaultQuality());
       } catch (e) {
         messenger?.showSnackBar(SnackBar(content: Text('播放地址解析失败：$e')));
         return;
@@ -1983,4 +2018,172 @@ class _ResultTile extends ConsumerWidget {
       onTap: () => _onTap(context),
     );
   }
+}
+/// 分段 tab 按钮（歌曲/专辑切换）
+class _SegTab extends StatelessWidget {
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+  const _SegTab({required this.label, required this.selected, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+        decoration: BoxDecoration(
+          color: selected ? scheme.primaryContainer : null,
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            fontSize: 13,
+            color: selected ? scheme.onPrimaryContainer : scheme.onSurfaceVariant,
+            fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// 专辑搜索结果：遍历所有音乐源搜专辑 → GridView 展示
+class _AlbumSearchResults extends ConsumerStatefulWidget {
+  final SearchSession session;
+  final String keyword;
+  const _AlbumSearchResults({required this.session, required this.keyword});
+
+  @override
+  ConsumerState<_AlbumSearchResults> createState() => _AlbumSearchResultsState();
+}
+
+class _AlbumSearchResultsState extends ConsumerState<_AlbumSearchResults> {
+  bool _loading = true;
+  String? _error;
+  List<SearchResult> _albums = const [];
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    try {
+      final assembler = await ref.read(sourceAssemblerProvider.future);
+      final sourceIds = widget.session.statusBySource.keys.toList();
+      final all = <SearchResult>[];
+      for (final sid in sourceIds) {
+        try {
+          all.addAll(await assembler.searchAlbums(sid, widget.keyword));
+        } catch (_) {}
+      }
+      if (!mounted) return;
+      setState(() {
+        _albums = all;
+        _loading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _error = e.toString();
+        _loading = false;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_loading) {
+      return const Center(child: CircularProgressIndicator(strokeWidth: 2.5));
+    }
+    if (_error != null) {
+      return Center(child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Text(_error!, textAlign: TextAlign.center),
+      ));
+    }
+    if (_albums.isEmpty) {
+      return const Center(child: Text('未找到专辑'));
+    }
+    return GridView.builder(
+      padding: const EdgeInsets.all(12),
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 2,
+        childAspectRatio: 0.72,
+        crossAxisSpacing: 12,
+        mainAxisSpacing: 12,
+      ),
+      itemCount: _albums.length,
+      itemBuilder: (context, i) => _AlbumCard(album: _albums[i]),
+    );
+  }
+}
+
+/// 专辑卡片：封面 + 专辑名 + 歌手，点击进 AlbumPage
+class _AlbumCard extends StatelessWidget {
+  final SearchResult album;
+  const _AlbumCard({required this.album});
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final cover = album.extra?['cover'] ?? '';
+    final artist = album.extra?['artist'] ?? '';
+    final songCount = album.extra?['songCount'];
+    return GestureDetector(
+      onTap: () => Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => AlbumPage(
+            sourceId: album.sourceId,
+            sourceName: album.sourceName,
+            albumName: album.title,
+            artist: artist.isNotEmpty ? artist : null,
+          ),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          AspectRatio(
+            aspectRatio: 1,
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(8),
+              child: cover.isNotEmpty
+                  ? Image.network(
+                      cover,
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, __, ___) => _placeholder(scheme),
+                    )
+                  : _placeholder(scheme),
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            album.title,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
+          ),
+          Text(
+            artist.isEmpty
+                ? (songCount != null ? '$songCount 首' : album.sourceName)
+                : '$artist${songCount != null ? ' · $songCount 首' : ''}',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _placeholder(ColorScheme scheme) => Container(
+        color: scheme.surfaceContainerHighest,
+        child: Icon(Icons.album, size: 40, color: scheme.outline),
+      );
 }

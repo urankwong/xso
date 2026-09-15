@@ -1,7 +1,8 @@
 import 'package:core/core.dart';
-import 'package:data/data.dart';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:source_engine/source_engine.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -35,6 +36,9 @@ class _BookDetailPageState extends ConsumerState<BookDetailPage> {
   String? _error;
   bool _fav = false;
 
+  /// 上次读到的章节索引（未读过/无记录为 null），用于「继续阅读」
+  int? _resumeIndex;
+
   @override
   void initState() {
     super.initState();
@@ -51,32 +55,36 @@ class _BookDetailPageState extends ConsumerState<BookDetailPage> {
       final src = await ref.read(sourceByIdProvider(r.sourceId).future);
       if (!mounted) return;
       _source = src;
-      if (src != null) {
-        // 详情页本身也是目录页（Legado 主流写法），一次请求拿回
-        // 元信息与目录，避免连发两次同一页面
-        try {
-          final engine = ref.read(sourceEngineProvider);
-          final info = await engine.fetchBookInfo(src, r.url);
-          final toc = src.canRead
-              ? await engine.fetchChapters(src, r.url)
-              : const <Chapter>[];
-          if (!mounted) return;
-          setState(() {
-            _info = info;
-            _chapters = toc;
-            _loading = false;
-          });
-        } catch (e) {
-          if (!mounted) return;
-          setState(() {
-            _error = '详情抓取失败：${e.toString().split('\n').first}';
-            _loading = false;
-          });
-        }
-      } else {
-        setState(() => _loading = false);
+      if (src == null) {
+        // 源反查失败：不再整页报错丢弃搜索结果已有信息，
+        // 降级为「仅展示搜索结果已知字段 + 提示条」，至少可用。
+        setState(() {
+          _error = '源不存在或已被禁用，仅展示已知信息';
+          _loading = false;
+        });
+        return;
       }
+      final engine = ref.read(sourceEngineProvider);
+      // 分离 try-catch：bookInfo 成功的结果即使 chapters 失败也保留
+      try {
+        _info = await engine.fetchBookInfo(src, r.url);
+      } catch (e) {
+        _info = null;
+        _error = '详情抓取失败：${e.toString().split('\n').first}';
+      }
+      if (src.canRead) {
+        try {
+          _chapters = await engine.fetchChapters(src, r.url);
+        } catch (e) {
+          _chapters = const [];
+          // chapters 失败不覆盖已有的 bookInfo 错误
+          _error ??= '目录加载失败：${e.toString().split('\n').first}';
+        }
+      }
+      if (!mounted) return;
+      setState(() => _loading = false);
       _checkFav();
+      _checkResume();
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -92,6 +100,17 @@ class _BookDetailPageState extends ConsumerState<BookDetailPage> {
       final list = await dao.all();
       if (!mounted) return;
       setState(() => _fav = list.any((f) => f.url == widget.result.url));
+    } catch (_) {}
+  }
+
+  Future<void> _checkResume() async {
+    try {
+      final p = await SharedPreferences.getInstance();
+      // 与 reader_page.dart 的 read_pos_ 前缀一致，读取上次读到的章节
+      final i = p.getInt('read_pos_${widget.result.url}');
+      if (!mounted) return;
+      final valid = i != null && i > 0 && i < _chapters.length;
+      if (valid) setState(() => _resumeIndex = i);
     } catch (_) {}
   }
 
@@ -149,7 +168,7 @@ class _BookDetailPageState extends ConsumerState<BookDetailPage> {
 
   @override
   Widget build(BuildContext context) {
-    final r = widget.result;
+
     final scheme = Theme.of(context).colorScheme;
     return Scaffold(
       appBar: AppBar(title: const Text('详情')),
@@ -163,8 +182,7 @@ class _BookDetailPageState extends ConsumerState<BookDetailPage> {
                 _actions(scheme),
                 if (_error != null) ...[
                   const SizedBox(height: 12),
-                  Text(_error!,
-                      style: TextStyle(color: scheme.error, fontSize: 12)),
+                  _errorBanner(scheme),
                 ],
                 const SizedBox(height: 20),
                 _metaSection(scheme),
@@ -178,6 +196,33 @@ class _BookDetailPageState extends ConsumerState<BookDetailPage> {
                 _linkRow(scheme),
               ],
             ),
+    );
+  }
+
+  /// 非致命错误条：出现在内容上方，附「重试」。相比整页错误页更柔和，
+  /// 源反查失败 / 单字段抓取失败时仍能展示搜索结果已有信息。
+  Widget _errorBanner(ColorScheme scheme) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: scheme.errorContainer.withValues(alpha: 0.5),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.warning_amber, size: 18, color: scheme.error),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(_error!,
+                style: TextStyle(color: scheme.error, fontSize: 12)),
+          ),
+          TextButton(
+            onPressed: _load,
+            child: const Text('重试'),
+          ),
+        ],
+      ),
     );
   }
 
@@ -201,7 +246,8 @@ class _BookDetailPageState extends ConsumerState<BookDetailPage> {
                 ? Image.network(
                     cover,
                     fit: BoxFit.cover,
-                    // 封面拉不到就用占位，不要显示破图
+                    cacheWidth: 184,
+                    cacheHeight: 256,
                     errorBuilder: (_, __, ___) => _coverPlaceholder(scheme),
                   )
                 : _coverPlaceholder(scheme),
@@ -252,26 +298,70 @@ class _BookDetailPageState extends ConsumerState<BookDetailPage> {
       );
 
   Widget _actions(ColorScheme scheme) {
-    final canRead = _source?.canRead == true && _chapters.isNotEmpty;
-    return Wrap(
-      spacing: 10,
-      runSpacing: 8,
+    final canRead = _source?.canRead == true;
+    final hasToc = _chapters.isNotEmpty;
+    final loading = _loading;
+    // 有历史阅读记录 → 主按钮变「继续阅读」（从上次章节起）
+    final resume = _resumeIndex != null;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        if (canRead)
+        if (canRead && hasToc)
+          // 主操作：醒目大按钮，对标主流阅读软件；有进度时改为「继续阅读」
           FilledButton.icon(
-            onPressed: () => _startReading(),
-            icon: const Icon(Icons.menu_book, size: 18),
-            label: const Text('开始阅读'),
+            onPressed: () => _startReading(index: resume ? _resumeIndex! : -1),
+            style: FilledButton.styleFrom(
+              minimumSize: const Size.fromHeight(50),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12)),
+              textStyle: const TextStyle(
+                  fontSize: 17, fontWeight: FontWeight.w600),
+            ),
+            icon: Icon(resume ? Icons.play_arrow : Icons.menu_book, size: 24),
+            label: Text(resume ? '继续阅读' : '开始阅读'),
+          )
+        else if (canRead && !loading)
+          // 目录没拉到：给出明确原因 + 重试，不制造"没入口"的空白
+          Container(
+            padding: const EdgeInsets.symmetric(
+                horizontal: 14, vertical: 12),
+            decoration: BoxDecoration(
+              color: scheme.surfaceContainerHighest.withValues(alpha: 0.6),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Row(
+              children: [
+                Icon(Icons.menu_book_outlined,
+                    size: 22, color: scheme.onSurfaceVariant),
+                const SizedBox(width: 10),
+                const Expanded(
+                  child: Text('暂时无法获取章节目录，无法开始阅读',
+                      style: TextStyle(fontSize: 13)),
+                ),
+                TextButton(onPressed: _load, child: const Text('重试')),
+              ],
+            ),
           ),
-        OutlinedButton.icon(
-          onPressed: _toggleFav,
-          icon: Icon(_fav ? Icons.star : Icons.star_border, size: 18),
-          label: Text(_fav ? '已收藏' : '收藏'),
-        ),
-        OutlinedButton.icon(
-          onPressed: _openUrl,
-          icon: const Icon(Icons.open_in_new, size: 18),
-          label: const Text('打开原网页'),
+        const SizedBox(height: 10),
+        Row(
+          children: [
+            Expanded(
+              child: OutlinedButton.icon(
+                onPressed: _toggleFav,
+                icon: Icon(_fav ? Icons.star : Icons.star_border,
+                    size: 18),
+                label: Text(_fav ? '已收藏' : '收藏'),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: OutlinedButton.icon(
+                onPressed: _openUrl,
+                icon: const Icon(Icons.open_in_new, size: 18),
+                label: const Text('打开原网页'),
+              ),
+            ),
+          ],
         ),
       ],
     );
@@ -389,10 +479,48 @@ class _BookDetailPageState extends ConsumerState<BookDetailPage> {
           ),
         if (_chapters.length > preview)
           TextButton(
-            onPressed: () => _startReading(index: 0),
+            onPressed: _showFullToc,
             child: Text('查看全部 ${_chapters.length} 章'),
           ),
       ],
+    );
+  }
+
+  /// 完整目录弹窗：可滚动选择任意章节
+  void _showFullToc() {
+    showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (sheetCtx) => DraggableScrollableSheet(
+        expand: false,
+        initialChildSize: 0.7,
+        maxChildSize: 0.95,
+        builder: (context, scrollController) => Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 4, 20, 8),
+              child: Text('目录（共 ${_chapters.length} 章）',
+                  style: Theme.of(context).textTheme.titleSmall),
+            ),
+            Expanded(
+              child: ListView.builder(
+                controller: scrollController,
+                itemCount: _chapters.length,
+                itemBuilder: (context, i) => ListTile(
+                  dense: true,
+                  title: Text(_chapters[i].title,
+                      maxLines: 1, overflow: TextOverflow.ellipsis),
+                  onTap: () {
+                    Navigator.pop(sheetCtx);
+                    _startReading(index: i);
+                  },
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 

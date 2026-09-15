@@ -79,3 +79,133 @@ class SourceMeta {
     this.updateUrl,
   });
 }
+
+/// 净化规则的作用范围。
+///
+/// 参考 Legado「替换净化」的做法：只有"全局"是不够的 —— 一条针对某站点
+/// 广告的规则拿到别的书上跑，轻则无效、重则误删正常文字。所以要能限定
+/// 到"这本书"或"这个书源"。
+enum FilterScope {
+  /// 全局：所有源的所有书（默认，兼容旧数据）
+  global,
+
+  /// 仅本源：同书源下的所有书（站点级广告用这个）
+  source,
+
+  /// 仅本书：只对当前这本书生效（最安全，选中即净化时的默认）
+  book,
+}
+
+/// 正文净化规则：一条正则替换（等价于 Legado 的「替换净化」）。
+///
+/// 站点广告千奇百怪，内置规则永远追不上；用户自己能加一条规则，
+/// 才是这类问题的终局解法。规则在正文清洗**之后**应用，
+/// 所以用户看到的是"已经去过广告"的文本，写规则时不必考虑原始 HTML。
+class ContentFilterRule {
+  /// 匹配用的正则（Dart RegExp 语法）
+  final String pattern;
+
+  /// 替换成什么。空串 = 删除命中内容（最常见的用法）。
+  final String replacement;
+
+  /// 规则名，仅用于展示；空则 UI 直接显示 [pattern]
+  final String? label;
+
+  final bool enabled;
+
+  /// 作用范围
+  final FilterScope scope;
+
+  /// 范围键：scope 为 [FilterScope.book] 时是书的标识，
+  /// [FilterScope.source] 时是书源 id；[FilterScope.global] 忽略。
+  final String? scopeKey;
+
+  const ContentFilterRule({
+    required this.pattern,
+    this.replacement = '',
+    this.label,
+    this.enabled = true,
+    this.scope = FilterScope.global,
+    this.scopeKey,
+  });
+
+  /// 这条规则是否作用于给定的书/源。
+  ///
+  /// [bookKey] / [sourceKey] 为空时（调用方没提供标识）只放行全局规则 ——
+  /// 宁可不生效，也不要拿限定范围的规则去改别的书。
+  bool appliesTo({String? bookKey, String? sourceKey}) {
+    switch (scope) {
+      case FilterScope.global:
+        return true;
+      case FilterScope.source:
+        return scopeKey != null &&
+            scopeKey!.isNotEmpty &&
+            scopeKey == sourceKey;
+      case FilterScope.book:
+        return scopeKey != null && scopeKey!.isNotEmpty && scopeKey == bookKey;
+    }
+  }
+
+  /// 作用范围的中文短标签（列表/提示用）
+  String get scopeLabel => switch (scope) {
+        FilterScope.global => '全局',
+        FilterScope.source => '本源',
+        FilterScope.book => '本书',
+      };
+
+  ContentFilterRule copyWith({
+    String? pattern,
+    String? replacement,
+    String? label,
+    bool? enabled,
+    FilterScope? scope,
+    String? scopeKey,
+  }) =>
+      ContentFilterRule(
+        pattern: pattern ?? this.pattern,
+        replacement: replacement ?? this.replacement,
+        label: label ?? this.label,
+        enabled: enabled ?? this.enabled,
+        scope: scope ?? this.scope,
+        scopeKey: scopeKey ?? this.scopeKey,
+      );
+
+  Map<String, dynamic> toJson() => {
+        'pattern': pattern,
+        'replacement': replacement,
+        if (label != null) 'label': label,
+        'enabled': enabled,
+        'scope': scope.name,
+        if (scopeKey != null) 'scopeKey': scopeKey,
+      };
+
+  /// 容错解析：坏数据不抛异常（规则列表损坏不该让整个设置页打不开）
+  static ContentFilterRule? tryParse(dynamic raw) {
+    if (raw is! Map) return null;
+    final p = raw['pattern'];
+    if (p is! String || p.trim().isEmpty) return null;
+    final scopeName = raw['scope']?.toString();
+    final scope = FilterScope.values.firstWhere(
+      (s) => s.name == scopeName,
+      orElse: () => FilterScope.global, // 老数据没有 scope 字段 → 全局
+    );
+    return ContentFilterRule(
+      pattern: p,
+      replacement: raw['replacement']?.toString() ?? '',
+      label: raw['label']?.toString(),
+      enabled: raw['enabled'] as bool? ?? true,
+      scope: scope,
+      scopeKey: raw['scopeKey']?.toString(),
+    );
+  }
+
+  /// 正则是否合法（保存前校验，避免写下一条永远不生效的规则）
+  bool get isValidRegExp {
+    try {
+      RegExp(pattern);
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+}

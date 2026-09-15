@@ -40,10 +40,10 @@ app/quickjs_c_bridge.dll
 # 源引擎调试工具目录
 packages/*/tool/
 
-# shell 误建乱码文件
-0}).slice(0
-t.substring(0
-document.documentElement.outerHTML.substring(0
+# shell 误建乱码文件（转义 glob 字符，避免语法错误破坏搜索工具）
+/\0\}\)\.slice\(0
+/\t\.substring\(0
+/document\.documentElement\.outerHTML\.substring\(0
 
 # 内置源内容(含站点域名/规则/JS)——真实源存放于独立私有仓,
 # 仅 CI 构建时拉入, 本地保留未跟踪副本, 不进公开仓
@@ -54,3 +54,10 @@ app/assets/sources/
 ci_run.json
 head.bin
 nul
+
+# 敏感调研文档(含后端地址) / 调试脚本 / 临时截图抓取, 不进公开仓
+docs/QingMusic源码调研报告.md
+app/tool/
+_s*.png
+_vc.txt
+adbkb_a16.bin

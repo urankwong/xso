@@ -104,17 +104,25 @@ class LegadoAdapter {
       final bu = _optionalRule(ruleSearch, 'bookUrl') ?? 'a@href';
       final titleRule = _buildFieldRule(nm);
       final urlRule = _buildFieldRule(bu);
+      // 可选展示字段：缺失就缺席，绝不参与"能否导入/能否搜索"的判定。
+      // 带上它们的意义见 [_buildSearchExtraFields]。
+      final extraFields = _buildSearchExtraFields(ruleSearch);
+      final fields = <String, FieldRule>{
+        'title': titleRule,
+        'url': urlRule,
+        ...extraFields,
+      };
       // Legado 里 `@json:` 前缀常被省略，直接写成 `$.data.list`。
       // 只认 `@json:` 会把这类源当成 CSS 选择器，直接抛 FormatException。
       final jsonList = _jsonPathOf(bl);
       resultRule = jsonList != null
           ? ResultRule(
               jsonPath: jsonList,
-              fields: {'title': titleRule, 'url': urlRule},
+              fields: fields,
             )
           : ResultRule(
               container: _parseSelector(bl),
-              fields: {'title': titleRule, 'url': urlRule},
+              fields: fields,
             );
     }
 
@@ -259,6 +267,35 @@ class LegadoAdapter {
     return r.isEmpty ? null : r;
   }
 
+  /// 搜索结果的**展示增强字段**（Legado `ruleSearch` 里的可选字段）。
+  ///
+  /// 带上它们不是为了让列表好看，而是解决一个真实问题：
+  /// 搜"诡秘之主"时站点会返回十几本同人，原著《诡秘之主》和它们的标题
+  /// 一模一样，列表上看不出区别，用户只能逐条点进去验证。有作者/最新章节
+  /// 就能当场分辨（爱潜水的乌贼 vs 各种同人写手）。
+  ///
+  /// 字段一律经 [_optField] 过滤：含 `@js:`/`<js>` 等当前引擎跑不了的语法时
+  /// 返回 null，此处便不加入 fields —— 宁缺勿错，与 [_buildBookMeta] 同一取舍。
+  ///
+  /// 刻意**不包含** `intro`：简介动辄数百字，每条结果都带会让列表页
+  /// 内存和传输白白放大一个量级，且列表 UI 也不展示它。
+  Map<String, FieldRule> _buildSearchExtraFields(
+      Map<String, dynamic> ruleSearch) {
+    const mapping = <String, String>{
+      'author': 'author',
+      'lastChapter': 'lastChapter',
+      'kind': 'kind',
+      'wordCount': 'wordCount',
+      'coverUrl': 'coverUrl',
+    };
+    final out = <String, FieldRule>{};
+    for (final e in mapping.entries) {
+      final r = _optField(ruleSearch[e.key]);
+      if (r != null) out[e.value] = r;
+    }
+    return out;
+  }
+
   /// Legado `ruleToc` → 目录规则。
   /// [chapterList] 参数用于兼容"目录就在详情页里"的写法（详情页即目录页）。
   TocRule? _buildToc(String? _, dynamic rawToc) {
@@ -384,16 +421,33 @@ class LegadoAdapter {
   /// 宿主运行时对象：baseUrl/key/source/java/cookie/cache/crypto + 规则求值函数
   String _hostRuntime(String base) =>
       r'''
-      var baseUrl = ''' +
+      // Legado 语义下这两个**必须分开**：
+      //   baseUrl   = 当前页地址（目录/正文钩子里的 url 参数）
+      //   getKey()  = 书源根地址（bookSourceUrl）
+      // 混成一个值的后果实测过：目录钩子 `baseUrl.match(/read\/(\d+)/)` 提不到
+      // 书号（baseUrl 成了光秃秃的站根），而 `source.getKey()+"/novel/clist/"`
+      // 又拼成了当前页地址开头，两头都不对 → 目录恒为空。
+      // 钩子参数里有 url 时以它为准，没有则退回书源地址。
+      var baseUrl = (typeof url !== 'undefined' && url) ? url : ''' +
       jsonEncode(base) +
       r''';
       var key = (typeof keyword !== 'undefined') ? keyword : '';
+      // `page` 必须声明：runJs 把 page 作为实参传给规则函数
+      // （`fn(result, baseUrl, key, page, source, java, cookie)`）。缺了它，
+      // 整条 evalList 会以 "ReferenceError: page is not defined" 抛错，而
+      // evalList 的 catch 又会静默返回空数组 —— 表现就是"目录永远是空的、
+      // 且没有任何报错线索"（实测部分爱下类电子书站就是这个症状）。
+      var page = 1;
       var source = {
-        bookSourceUrl: baseUrl,
+        bookSourceUrl: ''' +
+      jsonEncode(base) +
+      r''',
         bookSourceName: '',
         bookSourceType: 0,
         lang: 'zh',
-        getKey: function(){ return baseUrl; },
+        getKey: function(){ return ''' +
+      jsonEncode(base) +
+      r'''; },
         getVariable: function(){ return globalThis.__legadoVar || '{}'; },
         setVariable: function(v){ globalThis.__legadoVar = v; },
         putVariable: function(v){ globalThis.__legadoVar = v; },
@@ -453,22 +507,50 @@ class LegadoAdapter {
         startBrowser: function(){ return true; },
         put: function(k, v){ cache.put(k, v); },
         get: function(k){ return cache.get(k); },
-        // java.ajax 的重放协议：QuickJS 是同步引擎、宿主（Dart）无法提供
-        // 同步网络，故第 1 轮执行时把缺失 URL 登记到 __ajaxNeed 并返回空串；
-        // 引擎异步抓取后写入 __ajaxCache 再重放钩子，第 2 轮即命中真实内容。
-        // 链式 ajax（下一次请求依赖上一次响应）由引擎多轮重放天然支持。
+        // java.ajax / java.post 的重放协议：QuickJS 是同步引擎、宿主（Dart）
+        // 无法提供同步网络，故第 1 轮执行时把缺失请求登记到 __ajaxNeed 并
+        // 返回占位；引擎异步抓取后写入 __ajaxCache 再重放钩子，第 2 轮即
+        // 命中真实内容。链式请求（下一次依赖上一次响应）由多轮重放天然支持。
+        //
+        // 登记值是 {method,url,body,key} 对象；ajax 的 key 就是 url 本身，
+        // post 的 key 额外拼上 body（同一地址不同表单体必须分开缓存）。
         ajax: function(url){
           var k = String(url == null ? '' : url);
           var cache2 = (globalThis.__ajaxCache = globalThis.__ajaxCache || {});
           var need = (globalThis.__ajaxNeed = globalThis.__ajaxNeed || {});
           if (k in cache2) return cache2[k];
-          need[k] = true;
+          need[k] = { method: 'GET', url: k, key: k };
           return '';
         },
         ajaxAll: function(urls){
           var out = [];
           for (var i = 0; i < (urls || []).length; i++) out.push(this.ajax(urls[i]));
           return out;
+        },
+        // java.post(url, body, headers) → Legado 的 Response 对象。
+        // 很多源的**目录**就是靠 POST 一个接口拿 JSON（实测部分爱下类
+        // 电子书站的 ruleToc 会 java.post 一个带 bid 参数的目录接口）。
+        // 此前 java 是 Proxy，未实现的方法一律返回空函数，于是这里的
+        // resp.body() 拿到 undefined → 目录恒为空 → 提示"无法获取章节目录"。
+        post: function(url, postBody, headers){
+          var k = String(url == null ? '' : url);
+          var b = (postBody == null ? '' : String(postBody));
+          var key = 'POST\u0001' + k + '\u0001' + b;
+          var cache2 = (globalThis.__ajaxCache = globalThis.__ajaxCache || {});
+          var need = (globalThis.__ajaxNeed = globalThis.__ajaxNeed || {});
+          var makeResp = function(text, ok){
+            return {
+              body: function(){ return text; },
+              code: function(){ return ok ? 200 : 0; },
+              message: function(){ return ok ? 'OK' : ''; },
+              headers: function(){ return {}; },
+              header: function(){ return ''; },
+              isSuccessful: function(){ return !!ok; }
+            };
+          };
+          if (key in cache2) return makeResp(cache2[key], true);
+          need[key] = { method: 'POST', url: k, body: b, key: key };
+          return makeResp('', false);
         }
       };
       // 未知 java.* 方法兜底：Legado 的 java 宿主方法很多（加密/文件/UI…），
@@ -644,7 +726,10 @@ class LegadoAdapter {
               try { var p = JSON.parse(v); if (Array.isArray(p)) return p; } catch (e) {}
               return [v];
             }
-          } catch (e) { return []; }
+          } catch (e) {
+            try { globalThis.__dbgEvalListErr = String(e); } catch (e2) {}
+            return [];
+          }
         }
         var r = String(rule || '');
         if (r.indexOf('@json:') >= 0) {

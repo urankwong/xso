@@ -79,6 +79,21 @@ class SourceRepository {
         if (type != null && type.isNotEmpty) m['type'] = type;
       });
 
+  /// 重新下发源内容，但保留用户的启用状态。
+  ///
+  /// 用途：内置源的**内容**可能需要修复下发（例如某个 Legado 源的书名
+  /// 选择器取错了元素，导致标题全部为空）。这类修复 id 不变，
+  /// 走 [save] 会把 enabled 重置为 true（用户禁用的内置源被重新打开），
+  /// 走 [updateMeta] 又碰不到 raw —— 两头不讨好，因此单独开这个接口：
+  /// 只覆盖 raw/name/type，其余字段原样保留。
+  Future<void> updateRaw(String id,
+      {required String raw, String? name, String? type}) =>
+      _mutate(id, (m) {
+        m['raw'] = raw;
+        if (name != null && name.isNotEmpty) m['name'] = name;
+        if (type != null && type.isNotEmpty) m['type'] = type;
+      });
+
   Future<void> delete(String id) async {
     final file = File('$rootDir/${_safeId(id)}.json');
     if (await file.exists()) await file.delete();

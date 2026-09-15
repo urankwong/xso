@@ -310,8 +310,12 @@ class _ReaderAudioBarState extends State<ReaderAudioBar> {
             await c.pause();
           } else if (c.status == TtsStatus.paused) {
             await c.resume();
-          } else if (c.status == TtsStatus.error) {
-            await c.stop();
+          } else {
+            // idle（尚未开始）或 error（上次失败）：这两个状态原来是**静默
+            // 什么都不做** —— 用户看到面板上有个播放键，按下去毫无反应，
+            // 感受就是"听书不能用"。改为重建听书：控制器记住上次的
+            // 章节/仓库/进度，失败时给出可执行的提示。
+            await c.restart();
           }
         },
       ),

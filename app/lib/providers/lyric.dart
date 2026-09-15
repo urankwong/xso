@@ -295,7 +295,22 @@ String? lyricsToLrc(List<LyricLine> lines) {
   return out.isEmpty ? null : out;
 }
 
-/// 结果附带的音质列表（来自源声明的 qualities 字段）
+/// 音质 id → 中文显示名
+const qualityDisplayNames = {
+  '128k': '标准 128k',
+  '320k': '高品 320k',
+  'flac': '无损 FLAC',
+  'flac24bit': 'Hi-Res',
+  'standard': '标准音质',
+  'exhigh': '超高音质',
+  'lossless': '无损音质',
+  'hires': 'Hi-Res',
+};
+
+/// 结果附带的音质列表（来自源声明的 qualities 字段）。
+/// 兼容两种格式：
+/// - 洛雪源：[{type:'128k', size, hash}, ...]（type 是音质档位）
+/// - 通用：[{id, name}, ...]
 List<({String id, String name})> parseQualities(Map<String, String>? extra) {
   final raw = extra?['qualities'];
   if (raw == null || raw.isEmpty) return const [];
@@ -304,10 +319,14 @@ List<({String id, String name})> parseQualities(Map<String, String>? extra) {
     if (list is! List) return const [];
     return list
         .whereType<Map>()
-        .map((q) => (
-              id: (q['id'] ?? q['name'] ?? '').toString(),
-              name: (q['name'] ?? q['id'] ?? '').toString(),
-            ))
+        .map((q) {
+          final id = (q['id'] ?? q['type'] ?? q['name'] ?? '').toString();
+          return (
+            id: id,
+            name: qualityDisplayNames[id] ??
+                (q['name'] ?? q['type'] ?? id).toString(),
+          );
+        })
         .where((q) => q.id.isNotEmpty)
         .toList();
   } catch (_) {

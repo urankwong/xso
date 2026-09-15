@@ -22,7 +22,7 @@ void main() {
         fetcher: (url,
                 {method = 'GET',
                 headers = const {},
-                charset = 'utf-8'}) async =>
+                charset = 'utf-8', String? body}) async =>
             responses[url] ?? (throw Exception('network down: $url')),
       );
 
@@ -197,7 +197,7 @@ void main() {
       expect(text, contains('第三页内容'));
     });
   });
-  group('java.ajax 重放协议（ixdzs8 型 token 挑战）', () {
+  group('java.ajax 重放协议（爱下类站 token 挑战）', () {
     // QuickJS 是同步引擎、Dart 无法同步网络。引擎用「重放」协议支持
     // 同步语义的 java.ajax：第 1 轮登记缺失 URL → 引擎抓取写缓存 →
     // 第 2 轮重放命中。
@@ -219,7 +219,7 @@ void main() {
         fetcher: (url,
                 {method = 'GET',
                 headers = const {},
-                charset = 'utf-8'}) async =>
+                charset = 'utf-8', String? body}) async =>
             responses[url] ?? (throw Exception('network down: $url')),
       );
       final text = await engine.fetchContent(
@@ -231,23 +231,22 @@ void main() {
 }
 
 /// 模拟「重放协议」的假运行时：
-/// 每轮 evaluate 若脚本是缓存写入则吞掉；主钩子脚本第 1 轮返回 __need，
-/// 之后返回 __result。
+/// 主钩子脚本第 1 轮返回 `__need`（**对象形式**：{method,url,body,key}，
+/// 与引擎现在的解析格式一致），第 2 轮起返回 `__result`。
+///
+/// 注意：缓存写入的独立 evaluate 已不存在 —— 引擎把重放缓存放在 Dart 侧、
+/// 每轮随 script 注入（JS 运行时的 globalThis 不跨 evaluate 保留）。
 class _AjaxReplayJs extends FakeJsRuntime {
   int rounds = 0;
-  bool _cached = false;
 
   @override
   Future<String> evaluate(String script, {Duration? timeout}) async {
-    if (script.contains('__ajaxCache')) {
-      _cached = true;
-      return '1';
-    }
     rounds++;
     if (rounds == 1) {
-      return '{"__need":["https://book.example.com/read/1?challenge=tok"]}';
+      return '{"__need":[{"method":"GET",'
+          '"url":"https://book.example.com/read/1?challenge=tok",'
+          '"key":"https://book.example.com/read/1?challenge=tok"}]}';
     }
-    assert(_cached);
     return '{"__result":"挑战后正文"}';
   }
 }

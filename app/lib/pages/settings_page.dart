@@ -18,6 +18,7 @@ class _SettingsPageState extends State<SettingsPage> {
   String _saveLoc = 'app';
   bool _downloadConfirm = true;
   bool _vinylEffect = false;
+  String _defaultQuality = 'standard';
   UaMode _uaMode = UaPresets.defaultMode;
 
   @override
@@ -28,6 +29,7 @@ class _SettingsPageState extends State<SettingsPage> {
       _saveLoc = p.getString('saveLocation') ?? 'app';
       _downloadConfirm = p.getBool('downloadConfirm') ?? true;
       _vinylEffect = p.getBool('vinylEffect') ?? false;
+      _defaultQuality = p.getString('defaultQuality') ?? 'standard';
       // 老数据兼容：只填过 ua、没存过 uaMode 时按「自定义」回显
       final mk = p.getString('uaMode');
       _uaMode = (mk == null || mk.isEmpty)
@@ -110,6 +112,29 @@ class _SettingsPageState extends State<SettingsPage> {
               final p = await SharedPreferences.getInstance();
               await p.setBool('downloadConfirm', v);
             },
+          ),
+          const Divider(height: 1),
+          ListTile(
+            title: const Text('默认播放音质'),
+            subtitle: const Text(
+                '搜索点歌与自动换源时优先使用的音质档位；'
+                '若该音质不可用会自动回退到标准音质。',
+                style: TextStyle(fontSize: 12)),
+            trailing: DropdownButton<String>(
+              value: _defaultQuality,
+              items: const [
+                DropdownMenuItem(value: 'standard', child: Text('标准 128k')),
+                DropdownMenuItem(value: '320k', child: Text('高品 320k')),
+                DropdownMenuItem(value: 'flac', child: Text('无损 FLAC')),
+                DropdownMenuItem(value: 'flac24bit', child: Text('Hi-Res')),
+              ],
+              onChanged: (v) async {
+                if (v == null) return;
+                setState(() => _defaultQuality = v);
+                final p = await SharedPreferences.getInstance();
+                await p.setString('defaultQuality', v);
+              },
+            ),
           ),
           const Divider(height: 1),
           SwitchListTile(

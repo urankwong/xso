@@ -51,6 +51,18 @@ Future<bool> downloadConfirmEnabled() async {
   }
 }
 
+/// 默认播放/下载音质（SharedPreferences 'defaultQuality'，默认 standard）。
+/// 值为 lx 音质档位 id：standard/320k/flac/flac24bit。
+Future<String> defaultQuality() async {
+  try {
+    return (await SharedPreferences.getInstance())
+            .getString('defaultQuality') ??
+        'standard';
+  } catch (_) {
+    return 'standard';
+  }
+}
+
 @immutable
 class DownloadTask {
   final String id; // url 去重

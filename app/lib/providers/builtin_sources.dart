@@ -138,23 +138,17 @@ class BuiltinSources {
     'assets/sources/mf_aiting.js',
     // ---- 有声播客（专辑两段式：search 返回专辑，详情拉章节连播）----
     'assets/sources/mf_lrts.js',
-    // ---- 洛雪社区音源（来源 xzh767/lxmusic-source-all 等，可删）----
-    // 注意：洛雪协议里「搜索」是宿主职责，源只做 musicUrl 取链（见 lx.dart 的宿主搜索回退）。
-    // 因此判断一个洛雪源能否用，唯一看点是它依赖的**解析后端是否存活**。
-    // 2026-09 实测（修复源初始化 bug 后重测）：6 个源的后端已全部停服，一并摘除：
-    //   lx_nya      → 103.40.13.21:9866        ECONNREFUSED（服务器已关）
-    //   lx_zhizun   → 110.42.36.53:1314        ETIMEDOUT（服务器死）
-    //   lx_huibq    → lxmusicapi.onrender.com  unknow error（Render 已停服）
-    //   lx_sixyin   → 同 lx_huibq（混淆源，加载即挂死）
-    //   lx_ikun     → api.ikunshare.com        ENOTFOUND（域名已失效）
-    //   lx_gzh_v3   → 88.lxmusic.中国          unknow error（/url 已 404）
-    'assets/sources/lx_monster.js', // 直连平台官方接口，实测 KW 端到端闭环 HTTP 206
+    // ---- 洛雪音源（统一取链后端）----
+    // 搜索是宿主职责（lx_host_search.dart 覆盖 kw/kg/tx/wy/mg），源只做 musicUrl 取链。
+    // lx_qingmusic 走统一取链后端；后端地址在源文件内，仅随私有源仓提供，不入库本公开仓。
+    // 已淘汰：各平台直连旧源 + 若干停服社区源（详见私有源仓历史）。
+    'assets/sources/lx_qingmusic.js',
   ];
 
   /// JS 源文件名 → 展示名
   static const _jsPrettyNames = {
     'musicfree_itunes.js': 'iTunes 音乐（试听30s·MusicFree）',
-    'lx_itunes.js': 'iTunes 音乐（试听30s·洛雪）',
+
     'mf_netease_cloud.js': '网易云音乐',
     'mf_yuanli_wy.js': '网易云·元力音源',
     'mf_qq_music.js': 'QQ音乐',
@@ -174,9 +168,7 @@ class BuiltinSources {
     'mf_gd_music.js': 'GD音乐台',
     'mf_aiting.js': '爱听',
     'mf_lrts.js': '懒人听书',
-    // 其余洛雪源已摘除（后端停服，理由见 _manifest 注释）：
-    // lx_sixyin / lx_nya / lx_zhizun / lx_huibq / lx_ikun / lx_gzh_v3
-    'lx_monster.js': 'Monster音源（洛雪）',
+    'lx_qingmusic.js': 'QingMusic音源（洛雪）',
   };
 
   /// JS 源文件名 → 内容类型（缺省 music）
@@ -195,7 +187,7 @@ class BuiltinSources {
   /// 原因：清单指纹基于文件**路径**，改内容不改文件名时指纹不变，
   /// 老用户升级后就不会重新导入，拿到的一直是旧版本的源
   /// （例如 Legado 文本型源的类型从 book 改为 novel 这类映射变更）。
-  static const manifestVersion = 2;
+  static const manifestVersion = 7;
 
   /// 内置源清单指纹：用于判断「是否需要重新导入」。
   ///
@@ -254,12 +246,18 @@ class BuiltinSources {
         }
         ids.add(id);
         if (existingIds.contains(id)) {
-          // 已存在也要刷新元信息：内置源的**类型映射**会随版本更新
-          // （如 Legado 文本型源由 book 改为 novel）。只跳过不更新的话，
-          // 老用户升级后仍用着旧映射。这里只改 name/type，保留 raw 与
-          // 用户的启用状态 —— 整体覆盖会抹掉用户对内置源的改动。
+          // 已存在：刷新元信息**并重新下发 raw**。
+          //
+          // 只刷 name/type 是不够的 —— 内置源的内容修复（如某个 Legado 源
+          // 的书名选择器取错元素、导致标题全空）在 id 不变的前提下压根
+          // 不会下发，老用户升级后依旧用着坏版本，bug 等于没修。
+          //
+          // 覆盖 raw 的顾虑是"抹掉用户对内置源的手动改动"，但这支逻辑
+          // 只在**清单指纹变化时**被调用（见 main.dart 的
+          // _ensureBuiltinSources），即每次发版最多一次，不是每次启动都跑；
+          // 且走的是 updateRaw，enabled 状态不会被重置。
           try {
-            await repo.updateMeta(id, name: name, type: type);
+            await repo.updateRaw(id, raw: raw, name: name, type: type);
           } catch (_) {}
           continue;
         }

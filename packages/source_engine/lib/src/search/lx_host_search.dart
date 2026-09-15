@@ -163,7 +163,7 @@ class LxHostSearchBundle {
       source: 'kg',
       interval: formatPlayTime(raw.Duration),
       _interval: raw.Duration,
-      img: null, lrc: null, otherSource: null,
+      img: raw.web_albumpic_short || null, lrc: null, otherSource: null,
       hash: raw.FileHash,
       types: types, _types: _types, typeUrl: {}
     };
@@ -228,7 +228,7 @@ class LxHostSearchBundle {
         albumId: decodeName(info.ALBUMID || ''),
         interval: isNaN(iv) ? 0 : formatPlayTime(iv),
         albumName: info.ALBUM ? decodeName(info.ALBUM) : '',
-        lrc: null, img: null, otherSource: null,
+        lrc: null, img: info.web_albumpic_short ? ('http://img1.kuwo.cn/' + info.web_albumpic_short) : null, otherSource: null,
         types: types, _types: _types, typeUrl: {}
       });
     }
@@ -528,6 +528,273 @@ class LxHostSearchBundle {
   globalThis.__lxHostSearchHas = function(platform){
     return !!globalThis.__lxHostSearch[platform];
   };
+
+  // ================= 专辑搜索（5 平台）=================
+  function wyAlbumSearch(keyword, page, limit){
+    page = page || 1; limit = limit || 30;
+    var url = 'https://music.163.com/api/search/album?os=pc&s=' + encodeURIComponent(keyword)
+      + '&limit=' + limit + '&offset=' + (limit * (page - 1));
+    return httpFetch(url, {headers: {Referer: 'https://music.163.com/', 'User-Agent': 'Mozilla/5.0'}}).then(function(resp){
+      var body = asJson(resp.body);
+      if (!body || body.code !== 200) fail('网易专辑搜索失败');
+      var albums = (body.result && body.result.albums) || [];
+      var list = [];
+      for (var i = 0; i < albums.length; i++){
+        var a = albums[i];
+        list.push({
+          albumId: a.id, albumName: a.name,
+          singer: a.artist ? a.artist.name : '',
+          img: a.picUrl || '', source: 'wy',
+          songCount: a.size || 0, publishTime: a.publishTime || 0
+        });
+      }
+      var total = (body.result && body.result.albumCount) || list.length;
+      return { list: list, total: total, source: 'wy', isEnd: list.length < limit };
+    });
+  }
+  function kgAlbumSearch(keyword, page, limit){
+    page = page || 1; limit = limit || 30;
+    var url = 'http://mobilecdn.kugou.com/api/v3/search/album?keyword=' + encodeURIComponent(keyword)
+      + '&page=' + page + '&pagesize=' + limit;
+    return httpFetch(url).then(function(resp){
+      var body = asJson(resp.body);
+      if (!body || body.status !== 1) fail('酷狗专辑搜索失败');
+      var info = (body.data && body.data.info) || [];
+      var list = [];
+      for (var i = 0; i < info.length; i++){
+        var a = info[i];
+        list.push({
+          albumId: a.albumid, albumName: decodeName(a.albumname),
+          singer: decodeName(a.singername || ''),
+          img: a.img || '', source: 'kg',
+          songCount: a.songcount || 0, publishTime: a.publishtime || 0
+        });
+      }
+      var total = (body.data && body.data.total) || list.length;
+      return { list: list, total: total, source: 'kg', isEnd: list.length < limit };
+    });
+  }
+  function txAlbumSearch(keyword, page, limit){
+    page = page || 1; limit = limit || 30;
+    var payload = {
+      comm: {ct: '19', cv: '2151'},
+      req_1: {module: 'music.search.AlbumSearch', method: 'DoSearch',
+        param: {search_query: keyword, page_num: page, page_size: limit}}
+    };
+    return httpFetch('https://u.y.qq.com/cgi-bin/musicu.fcg', {
+      method: 'POST', headers: {'Content-Type': 'application/json', Referer: 'https://y.qq.com/'},
+      body: JSON.stringify(payload)
+    }).then(function(resp){
+      var body = asJson(resp.body);
+      var albums = (body && body.req_1 && body.req_1.data && body.req_1.data.body && body.req_1.data.body.album_list) || [];
+      var list = [];
+      for (var i = 0; i < albums.length; i++){
+        var a = albums[i];
+        list.push({
+          albumId: a.album_mid, albumName: a.album_name,
+          singer: formatSingerName(a.singers, 'name'),
+          img: a.album_pic || '', source: 'tx',
+          songCount: a.song_count || 0, publishTime: a.pub_time || 0
+        });
+      }
+      var total = (body && body.req_1 && body.req_1.data && body.req_1.data.body && body.req_1.data.body.album_total) || list.length;
+      return { list: list, total: total, source: 'tx', isEnd: list.length < limit };
+    });
+  }
+  function kwAlbumSearch(keyword, page, limit){
+    page = page || 1; limit = limit || 30;
+    var url = 'http://search.kuwo.cn/r.s?client=kt&all=' + encodeURIComponent(keyword)
+      + '&pn=' + (page - 1) + '&rn=' + limit
+      + '&uid=794762570&ver=kwplayer_ar_9.2.2.1&vipver=1&show_copyright_off=1&newver=1'
+      + '&ft=album&cluster=0&strategy=2012&encoding=utf8&rformat=json&vermerge=1&mobi=1';
+    return httpFetch(url).then(function(resp){
+      var body = parseBody(resp.body);
+      if (!body) fail('酷我专辑搜索失败');
+      var rawList = body.abslist || [];
+      var list = [];
+      for (var i = 0; i < rawList.length; i++){
+        var a = rawList[i];
+        list.push({
+          albumId: a.ALBUMID, albumName: decodeName(a.ALBUM || ''),
+          singer: decodeName(String(a.ARTIST || '').replace(/&/g, '\u3001')),
+          img: a.web_albumpic_short ? ('http://img1.kuwo.cn/' + a.web_albumpic_short) : '',
+          source: 'kw', songCount: parseInt(a.SONGNUM) || 0, publishTime: a.PUBLISHDATE || ''
+        });
+      }
+      var total = parseInt(body.TOTAL) || list.length;
+      return { list: list, total: total, source: 'kw', isEnd: list.length < limit };
+    });
+  }
+  function mgAlbumSearch(keyword, page, limit){
+    page = page || 1; limit = limit || 20;
+    if (!cryptoReady()) fail('缺少 CryptoJS（咪咕签名需要 MD5）');
+    var deviceId = '963B7AA0D21511ED807EE5846EC87D20';
+    var time = String(Date.now());
+    var sign = md5Hex(keyword + '6cdc72a439cef99a3418d2a78aa28c73yyapp2d16148780a1dcc7408e06336b98cfd50' + deviceId + time);
+    var url = 'https://jadeite.migu.cn/music_search/v3/search/searchAll'
+      + '?isCorrect=0&isCopyright=1'
+      + '&searchSwitch=' + encodeURIComponent('{"song":0,"album":1,"singer":0,"tagSong":0,"mvSong":0,"bestShow":0,"songlist":0,"lyricSong":0}')
+      + '&pageSize=' + limit + '&text=' + encodeURIComponent(keyword)
+      + '&pageNo=' + page + '&sort=0&sid=USS';
+    return httpFetch(url, {
+      headers: {uiVersion: 'A_music_3.6.1', deviceId: deviceId, timestamp: time, sign: sign, channel: '0146921'}
+    }).then(function(resp){
+      var result = asJson(resp.body);
+      if (!result || result.code !== '000000') fail('咪咕专辑搜索失败');
+      var albumData = result.albumResultData || {resultList: [], totalCount: 0};
+      var rawList = albumData.resultList || [];
+      var list = [];
+      for (var i = 0; i < rawList.length; i++){
+        var a = rawList[i];
+        list.push({
+          albumId: a.albumId, albumName: a.albumName,
+          singer: formatSingerName(a.singerList, 'name'),
+          img: a.img || '', source: 'mg',
+          songCount: a.songCount || 0, publishTime: a.publishDate || ''
+        });
+      }
+      var total = parseInt(albumData.totalCount) || list.length;
+      return { list: list, total: total, source: 'mg', isEnd: list.length < limit };
+    });
+  }
+
+  // ================= 专辑曲目获取（5 平台）=================
+  function wyAlbumTracks(albumId){
+    var url = 'https://music.163.com/api/album/' + albumId;
+    return httpFetch(url, {headers: {Referer: 'https://music.163.com/', 'User-Agent': 'Mozilla/5.0'}}).then(function(resp){
+      var body = asJson(resp.body);
+      if (!body || body.code !== 200) fail('网易专辑曲目失败');
+      var songs = body.songs || [];
+      var list = [];
+      for (var i = 0; i < songs.length; i++){
+        var s = songs[i];
+        var singers = [];
+        if (s.ar) for (var j = 0; j < s.ar.length; j++) singers.push(s.ar[j].name);
+        list.push({
+          name: s.name, singer: singers.join('\u3001'),
+          albumName: s.al ? s.al.name : '', albumId: albumId,
+          songmid: s.id, source: 'wy',
+          img: s.al ? s.al.picUrl : '', interval: formatPlayTime((s.dt || 0) / 1000),
+          types: [], _types: {}, typeUrl: {}
+        });
+      }
+      return { list: list, total: list.length, source: 'wy', isEnd: true };
+    });
+  }
+  function kgAlbumTracks(albumId){
+    var url = 'http://mobilecdn.kugou.com/api/v3/album/song?albumid=' + albumId + '&page=1&pagesize=-1';
+    return httpFetch(url).then(function(resp){
+      var body = asJson(resp.body);
+      if (!body || body.status !== 1) fail('酷狗专辑曲目失败');
+      var info = (body.data && body.data.info) || [];
+      var list = [];
+      for (var i = 0; i < info.length; i++){
+        var s = info[i];
+        list.push({
+          name: decodeName(s.songname), singer: decodeName(s.singername || ''),
+          albumName: decodeName(s.albumname || ''), albumId: albumId,
+          songmid: s.audioid, hash: s.hash, source: 'kg',
+          img: s.img || '', interval: formatPlayTime(s.duration || 0),
+          types: [], _types: {}, typeUrl: {}
+        });
+      }
+      return { list: list, total: list.length, source: 'kg', isEnd: true };
+    });
+  }
+  function txAlbumTracks(albumMid){
+    var payload = {
+      comm: {ct: '19', cv: '2151'},
+      req_1: {module: 'music.musichallAlbum.AlbumSongList', method: 'GetAlbumSongList',
+        param: {album_mid: albumMid, begin: 0, num: 200}}
+    };
+    return httpFetch('https://u.y.qq.com/cgi-bin/musicu.fcg', {
+      method: 'POST', headers: {'Content-Type': 'application/json', Referer: 'https://y.qq.com/'},
+      body: JSON.stringify(payload)
+    }).then(function(resp){
+      var body = asJson(resp.body);
+      var songs = (body && body.req_1 && body.req_1.data && body.req_1.data.songList) || [];
+      var list = [];
+      for (var i = 0; i < songs.length; i++){
+        var s = songs[i];
+        list.push({
+          name: s.song_name, singer: formatSingerName(s.singer, 'name'),
+          albumName: s.album_name || '', albumId: albumMid,
+          songmid: s.song_mid, source: 'tx',
+          img: '', interval: s.interval ? formatPlayTime(s.interval) : null,
+          types: [], _types: {}, typeUrl: {}
+        });
+      }
+      return { list: list, total: list.length, source: 'tx', isEnd: true };
+    });
+  }
+  function kwAlbumTracks(albumId){
+    var url = 'http://api.kuwo.cn/api/www/album/albumInfo?albumId=' + albumId + '&pn=1&rn=200';
+    return httpFetch(url, {headers: {Referer: 'https://www.kuwo.cn/', 'User-Agent': 'Mozilla/5.0'}}).then(function(resp){
+      var body = asJson(resp.body);
+      if (!body || body.code !== 200) fail('酷我专辑曲目失败');
+      var songs = (body.data && body.data.musicList) || [];
+      var list = [];
+      for (var i = 0; i < songs.length; i++){
+        var s = songs[i];
+        list.push({
+          name: decodeName(s.name), singer: decodeName(s.artist || ''),
+          albumName: decodeName(s.album || ''), albumId: albumId,
+          songmid: String(s.rid || '').replace('MUSIC_', ''), source: 'kw',
+          img: s.albumpic || '', interval: formatPlayTime(s.duration || 0),
+          types: [], _types: {}, typeUrl: {}
+        });
+      }
+      return { list: list, total: list.length, source: 'kw', isEnd: true };
+    });
+  }
+  function mgAlbumTracks(albumId){
+    var url = 'https://c.musicapp.migu.cn/MIGUM2.0/v1.0/content/queryAlbumSong?albumId=' + albumId + '&pageNo=1&pageSize=200';
+    return httpFetch(url).then(function(resp){
+      var body = asJson(resp.body);
+      if (!body || body.code !== '000000') fail('咪咕专辑曲目失败');
+      var songs = (body.data && body.data.songList) || [];
+      var list = [];
+      for (var i = 0; i < songs.length; i++){
+        var s = songs[i];
+        list.push({
+          name: s.songName, singer: formatSingerName(s.singerList, 'name'),
+          albumName: '', albumId: albumId,
+          songmid: s.songId, copyrightId: s.copyrightId, source: 'mg',
+          img: '', interval: formatPlayTime((s.duration || 0) / 1000),
+          types: [], _types: {}, typeUrl: {}
+        });
+      }
+      return { list: list, total: list.length, source: 'mg', isEnd: true };
+    });
+  }
+
+  // ================= 注册专辑桥 =================
+  globalThis.__lxAlbumSearch = { kg: kgAlbumSearch, kw: kwAlbumSearch, tx: txAlbumSearch, wy: wyAlbumSearch, mg: mgAlbumSearch };
+  globalThis.__lxAlbumTracks = { kg: kgAlbumTracks, kw: kwAlbumTracks, tx: txAlbumTracks, wy: wyAlbumTracks, mg: mgAlbumTracks };
+  globalThis.__lxAlbumSearchState = { result: '__pending__' };
+  globalThis.__lxAlbumSearchStart = function(platform, keyword, page, limit){
+    globalThis.__lxAlbumSearchState.result = '__pending__';
+    var fn = globalThis.__lxAlbumSearch[platform];
+    if (!fn) { globalThis.__lxAlbumSearchState.result = JSON.stringify({__error: '专辑搜索不支持平台: ' + platform}); return 1; }
+    Promise.resolve()
+      .then(function(){ return fn(keyword, page, limit); })
+      .then(function(r){ globalThis.__lxAlbumSearchState.result = JSON.stringify(r === undefined ? null : r); })
+      .catch(function(e){ globalThis.__lxAlbumSearchState.result = JSON.stringify({__error: (e && e.message) || String(e)}); });
+    return 1;
+  };
+  globalThis.__lxAlbumSearchTake = function(){ return globalThis.__lxAlbumSearchState.result; };
+  globalThis.__lxAlbumTracksState = { result: '__pending__' };
+  globalThis.__lxAlbumTracksStart = function(platform, albumId){
+    globalThis.__lxAlbumTracksState.result = '__pending__';
+    var fn = globalThis.__lxAlbumTracks[platform];
+    if (!fn) { globalThis.__lxAlbumTracksState.result = JSON.stringify({__error: '专辑曲目不支持平台: ' + platform}); return 1; }
+    Promise.resolve()
+      .then(function(){ return fn(albumId); })
+      .then(function(r){ globalThis.__lxAlbumTracksState.result = JSON.stringify(r === undefined ? null : r); })
+      .catch(function(e){ globalThis.__lxAlbumTracksState.result = JSON.stringify({__error: (e && e.message) || String(e)}); });
+    return 1;
+  };
+  globalThis.__lxAlbumTracksTake = function(){ return globalThis.__lxAlbumTracksState.result; };
   1
 })();
 ''';

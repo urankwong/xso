@@ -32,9 +32,22 @@ class _HomeShellState extends ConsumerState<HomeShell> {
 
   DateTime? _lastBackPressed;
 
+  /// 换源注入是否已设置。initState 完成前不得依赖 InheritedWidget（
+  /// Flutter 报 dependOnInheritedWidgetOfExactType 崩溃），
+  /// 所以放到 didChangeDependencies，首次执行一次即可。
+  bool _failoverInjected = false;
+
   @override
   void initState() {
     super.initState();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_failoverInjected) return;
+    _failoverInjected = true;
+
     // 换源实现注入给播放器：控制器本身不该依赖源装配与搜索编排，
     // 但"这个源放不出来就换个源"必须能在播放失败时自动发生
     final container = ProviderScope.containerOf(context);
