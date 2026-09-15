@@ -72,6 +72,7 @@ class SearchSessionNotifier extends StateNotifier<SearchSession?> {
       // 后台预取网盘详情（不阻塞 UI，用户点开即见）
       _prefetchPanDetails(session);
     });
+  }
 
   /// 后台预取网盘详情：搜索完成后对前几条网盘结果预取详情页，
   /// 提前发现网盘链接。总共最多 10 条，避免请求过量。
@@ -98,7 +99,6 @@ class SearchSessionNotifier extends StateNotifier<SearchSession?> {
         ref.read(panPrefetchProvider.notifier).state = results;
       }
     } catch (_) {}
-  }
   }
 
   static SearchSession _copy(SearchSession s) {
