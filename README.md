@@ -1,16 +1,23 @@
 # 汇搜 · xso
 
+[![License](https://img.shields.io/badge/license-AGPL--3.0-green.svg)](LICENSE)
+[![Release](https://img.shields.io/github/v/release/urankwong/xso.svg)](https://github.com/urankwong/xso/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/urankwong/xso/total.svg)](https://github.com/urankwong/xso/releases)
+[![Stars](https://img.shields.io/github/stars/urankwong/xso.svg?style=social)](https://github.com/urankwong/xso/stargazers)
+[![Forks](https://img.shields.io/github/forks/urankwong/xso.svg?style=social)](https://github.com/urankwong/xso/network/members)
+[![Watchers](https://img.shields.io/github/watchers/urankwong/xso.svg?style=social)](https://github.com/urankwong/xso/watchers)
+
 中文 · [English](#english)
 
 一个跨来源的**聚合搜索 App**：音乐 / 书籍 / 磁力 / 网盘多品类统一搜索、播放、下载与收藏。App 本体遵循「空壳原则」，不绑定任何特定站点——通过**导入源规则**扩展能力，并**原生兼容 [Legado 简单书源](https://github.com/gedoor/legado)、[洛雪音乐助手 (lx-music) 音源](https://github.com/lyswhut/lx-music-mobile)、[MusicFree 插件](https://github.com/maotoumao/MusicFree)** 三种主流第三方源格式。
 
-技术栈：Flutter + Riverpod + QuickJS（在 Dart 侧沙箱内运行源脚本的 JS 钩子）。
+技术栈：Flutter + Riverpod + QuickJS（在 Dart 侧沙箱内运行源脚本的 JS 钩子）；可选 **AI 动作层**，把搜索 / 播放 / 开书等 App 能力封装为工具，供 App 内对话模型或外部 Agent 调用。
 
 ## English
 
 **xso (汇搜)** is a Flutter-based **aggregator search app** for music, novels, torrents and cloud-drive links — unified search, playback, download and favorites. It follows an *empty-shell* principle: it binds to no specific site and is fully source-driven, natively compatible with **[Legado](https://github.com/gedoor/legado) book sources**, **[lx-music](https://github.com/lyswhut/lx-music-desktop) sources** and **[MusicFree](https://github.com/maotoumao/MusicFree) plugins** — bring your own sources.
 
-Built with Flutter + Riverpod + QuickJS (source JS hooks run in a Dart-side sandbox). See the sections below for supported source formats, features and build steps.
+Built with Flutter + Riverpod + QuickJS (source JS hooks run in a Dart-side sandbox), plus an optional **AI action layer** that exposes search / playback / open-book capabilities as tools for in-app chat models or external agents. See the sections below for supported source formats, features and build steps.
 
 ## 源格式兼容
 
@@ -36,6 +43,8 @@ xso 内置一个源引擎，可按不同协议加载源，也可自行编写 JSO
 - **局域网助手**：内置 LAN 服务，从浏览器批量粘贴/导入源
 - **账号态**：按源命名空间持久化 cookie / 用户变量，支持需登录的平台
 - **应用内更新**：从 GitHub Releases 检查新版本，App 内下载 APK 并唤起系统安装器；直连失败自动改用加速镜像，也可复制直链交给浏览器手动下载
+- **AI 对话（App 内）**：内置对话页，可自配兼容 OpenAI 协议的模型（Base URL / API Key / 模型名）；把聚合搜索、播放、开书续读、收藏、最近使用等 App 动作封装为工具供 AI 调用，用自然语言直接驱动「搜点什么 / 放首歌 / 打开那本书」
+- **AI 辅助调试**：源调试器 + 局域网 RPC 动作层，可让 AI 或外部 Agent 参与定位源规则失效、逐步核对搜索与解析结果
 
 ## 结构
 
@@ -90,6 +99,16 @@ cd app && flutter test
 2. 「源」页点任一源进入**源调试器**，输入关键词试搜，逐步查看结果与错误，用于校准规则
 3. 「搜索」页输入关键词 → 各源并发搜索、流式出结果（复制 / 打开 / 播放 / 下载 / 收藏）
 4. 「收藏」页按类型筛选、批量活性检测；「历史」页点击关键词回搜
+
+## 路线图
+
+xso 基于 Flutter 构建，天然具备跨平台编译能力。当前**以 Android 移动端为主、并已完整验证**；后续按优先级规划：
+
+- **桌面端**（Windows / macOS / Linux）：复用现有 core / source_engine / data 三个纯 Dart 包与 QuickJS 沙箱，主要是窗口布局与遥控器/键鼠交互适配；**代码可编译，但尚未逐平台验证**。
+- **iOS**：源脚本与音频链路依赖的平台能力需在真机与审核策略下验证后再行发布。
+- **AI 能力演进**：持续扩充 App 动作层可被模型 / 外部 Agent 调用的工具面，并完善源失效的 AI 辅助定位。
+
+> 桌面与 iOS 属规划项，进度以本仓库实际打出的 tag / Release 为准；在此之前，README 中的构建与运行说明以 Android 为准。
 
 ## 免责声明
 
